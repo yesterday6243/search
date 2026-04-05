@@ -1,0 +1,263 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shen Search</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-bg" aria-hidden="true"></div>
+    <div class="page-overlay" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <div class="brand-mini" id="siteTitleDisplay" title="点击更换背景">mx search</div>
+      <div class="topbar-actions">
+        <div class="sync-pill" id="syncStatus">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span>云端同步就绪</span>
+        </div>
+        <button class="icon-button settings-toggle" id="openSettingsButton" type="button" aria-label="打开设置" title="设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.4 7.4 0 0 0-1.62-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.22-1.13.53-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.72 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.07.63-.07.94s.03.63.07.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.41 1.04.72 1.62.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.22 1.13-.53 1.62-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="search-stage">
+        <form class="search-panel" id="searchForm" autocomplete="off">
+          <div class="search-row">
+            <div class="search-bar">
+              <button
+                class="search-icon-button"
+                id="searchIconButton"
+                type="button"
+                aria-label="立即搜索"
+                title="搜索"
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13Zm0 1.8a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4Zm5.61 10.04 3.39 3.39-1.27 1.27-3.39-3.39 1.27-1.27Z" />
+                </svg>
+              </button>
+              <input
+                id="searchInput"
+                class="search-input"
+                type="text"
+                spellcheck="false"
+                placeholder="搜索网页"
+              />
+              <button
+                class="search-clear-button hidden"
+                id="searchClearButton"
+                type="button"
+                aria-label="清空输入"
+                title="清空"
+              >
+                ×
+              </button>
+            </div>
+
+            <button
+              class="engine-button"
+              id="engineToggleButton"
+              type="button"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-label="切换搜索引擎"
+              title="切换搜索引擎"
+            >
+              <span id="activeEngineIcon"></span>
+            </button>
+          </div>
+
+          <div class="dropdown-panel history-panel hidden" id="historyPanel"></div>
+          <div class="dropdown-panel engine-menu hidden" id="engineMenu"></div>
+        </form>
+      </section>
+
+      <section class="tag-stage">
+        <div id="tagBoard" class="tag-board"></div>
+      </section>
+    </main>
+
+    <aside class="settings-drawer hidden" id="settingsDrawer" aria-hidden="true">
+      <div class="settings-header">
+        <div class="settings-header-left">
+          <p class="section-kicker">SETTINGS</p>
+          <h2>首页配置</h2>
+          <p class="settings-trail" id="settingsTrail">首页配置 - 基础信息</p>
+        </div>
+        <div class="settings-header-actions">
+          <button class="ghost-button danger" id="logoutButton" type="button">退出登录</button>
+          <button class="ghost-button" id="closeSettingsButton" type="button">关闭</button>
+        </div>
+      </div>
+
+      <form class="settings-form" id="settingsForm">
+        <div class="settings-scroll" id="settingsScroll">
+          <section class="settings-section" data-trail-section="基础信息">
+            <div class="settings-title-row">
+              <h3>基础信息</h3>
+              <span>会自动同步到所有设备</span>
+            </div>
+            <label class="field">
+              <span>浏览器标题</span>
+              <input id="siteTitleInput" type="text" maxlength="32" />
+            </label>
+            <label class="field">
+              <span>搜索框提示词</span>
+              <input id="searchPlaceholderInput" type="text" maxlength="80" />
+            </label>
+            <label class="field" id="searchBarHeightField">
+              <span>搜索框高度（主页搜索框与右侧引擎按钮） <strong id="searchBarHeightValue">68px</strong></span>
+              <input
+                id="searchBarHeightInput"
+                type="range"
+                min="52"
+                max="96"
+                step="1"
+                value="68"
+              />
+              <small class="field-help">拖动后会同时调整搜索输入框高度，以及右侧搜索引擎按钮高度。</small>
+            </label>
+            <label class="field" id="tagOpacityField">
+              <span>标签透明度（卡片底色深浅） <strong id="tagOpacityValue">94%</strong></span>
+              <input
+                id="tagOpacityInput"
+                type="range"
+                min="35"
+                max="100"
+                step="1"
+                value="94"
+              />
+              <small class="field-help">数值越高标签卡片越实，数值越低越通透。</small>
+            </label>
+          </section>
+
+          <section class="settings-section" data-trail-section="背景图">
+            <div class="settings-title-row">
+              <h3>背景图</h3>
+              <span>来自公共图床</span>
+            </div>
+            <label class="field">
+              <span>背景来源</span>
+              <select id="backgroundProviderInput">
+                <option value="bing_hourly">Bing 每小时精选</option>
+                <option value="picsum_seed">Picsum 随机图库</option>
+                <option value="custom_url">自定义公共图片地址</option>
+              </select>
+            </label>
+            <label class="field" id="backgroundSeedField">
+              <span>随机种子</span>
+              <input id="backgroundSeedInput" type="text" maxlength="60" />
+            </label>
+            <label class="field" id="backgroundUrlField">
+              <span>图片地址</span>
+              <input id="backgroundCustomUrlInput" type="url" placeholder="https://example.com/bg.jpg" />
+            </label>
+            <label class="field" id="backgroundOpacityField">
+              <span>背景遮罩透明度（背景清晰度） <strong id="backgroundOpacityValue">100%</strong></span>
+              <input
+                id="backgroundOpacityInput"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value="100"
+              />
+              <small class="field-help">数值越高背景越柔和，数值越低背景越清晰。</small>
+            </label>
+          </section>
+
+          <section class="settings-section" data-trail-section="搜索引擎">
+            <div class="settings-title-row">
+              <h3>搜索引擎</h3>
+            </div>
+            <div class="editor-stack" id="engineEditor"></div>
+            <div class="section-bottom-actions">
+              <button class="ghost-button" id="addEngineButton" type="button">添加引擎</button>
+            </div>
+          </section>
+
+          <section class="settings-section" data-trail-section="标签分类" id="categorySection">
+            <div class="settings-title-row">
+              <h3>标签分类</h3>
+            </div>
+            <div class="editor-stack" id="categoryEditor"></div>
+            <div class="section-bottom-actions">
+              <button class="ghost-button" id="addCategoryButton" type="button">添加分类</button>
+            </div>
+          </section>
+
+          <section class="settings-section" data-trail-section="搜索历史">
+            <div class="settings-title-row">
+              <h3>搜索历史</h3>
+              <span id="historyCountLabel">最近保留 100 条</span>
+            </div>
+            <div class="history-settings">
+              <p>搜索框会自动记住最近 100 条搜索，仅保存在当前浏览器，不会上传后端。</p>
+              <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
+            </div>
+          </section>
+        </div>
+
+        <div class="settings-footer">
+          <div class="settings-footer-actions">
+            <button class="ghost-button" id="cancelSettingsButton" type="button">取消</button>
+            <button class="primary-button" type="submit">保存设置</button>
+          </div>
+        </div>
+      </form>
+    </aside>
+
+    <aside class="auth-modal hidden" id="authModal" aria-hidden="true">
+      <div class="auth-header">
+        <div>
+          <p class="section-kicker">ACCOUNT</p>
+          <h2 id="authTitle">登录账号</h2>
+        </div>
+        <button class="ghost-button" id="closeAuthButton" type="button">关闭</button>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab is-active" id="authTabLogin" type="button">登录</button>
+        <button class="auth-tab" id="authTabRegister" type="button">注册</button>
+      </div>
+      <p class="auth-meta hidden" id="authMeta"></p>
+      <p class="auth-message hidden" id="authMessage"></p>
+
+      <form class="auth-form" id="loginForm" autocomplete="off">
+        <label class="field">
+          <span>账号</span>
+          <input id="loginUsernameInput" type="text" maxlength="32" required />
+        </label>
+        <label class="field">
+          <span>密码</span>
+          <input id="loginPasswordInput" type="password" minlength="8" maxlength="128" required />
+        </label>
+        <button class="primary-button auth-submit" type="submit">登录并同步</button>
+      </form>
+
+      <form class="auth-form hidden" id="registerForm" autocomplete="off">
+        <label class="field">
+          <span>账号（3-32位）</span>
+          <input id="registerUsernameInput" type="text" maxlength="32" required />
+        </label>
+        <label class="field">
+          <span>密码（至少8位）</span>
+          <input id="registerPasswordInput" type="password" minlength="8" maxlength="128" required />
+        </label>
+        <label class="field">
+          <span>确认密码</span>
+          <input id="registerPasswordConfirmInput" type="password" minlength="8" maxlength="128" required />
+        </label>
+        <button class="primary-button auth-submit" id="registerSubmitButton" type="submit">注册并登录</button>
+      </form>
+    </aside>
+
+    <div class="drawer-scrim hidden" id="drawerScrim"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
