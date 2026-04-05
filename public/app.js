@@ -1,6 +1,7 @@
 ﻿const searchForm = document.getElementById("searchForm");
 const searchInput = document.getElementById("searchInput");
 const searchBar = document.querySelector(".search-bar");
+const searchStage = document.querySelector(".search-stage");
 const searchIconButton = document.getElementById("searchIconButton");
 const searchClearButton = document.getElementById("searchClearButton");
 const historyPanel = document.getElementById("historyPanel");
@@ -12,6 +13,8 @@ const syncStatus = document.getElementById("syncStatus");
 const settingsDrawer = document.getElementById("settingsDrawer");
 const settingsTrail = document.getElementById("settingsTrail");
 const settingsScroll = document.getElementById("settingsScroll");
+const settingsQuickScroll = document.getElementById("settingsQuickScroll");
+const settingsQuickThumb = document.getElementById("settingsQuickThumb");
 const drawerScrim = document.getElementById("drawerScrim");
 const openSettingsButton = document.getElementById("openSettingsButton");
 const closeSettingsButton = document.getElementById("closeSettingsButton");
@@ -61,6 +64,8 @@ const ICON_CACHE_STORAGE_KEY = "mx_icon_source_cache_v1";
 const ICON_CACHE_MAX_ENTRIES = 300;
 const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
+const TAG_FADE_START_DISTANCE = 34;
+const TAG_FADE_HIDDEN_OFFSET = 2;
 const USER_LIMIT = 50;
 const AUTH_MODE_LOGIN = "login";
 const AUTH_MODE_REGISTER = "register";
@@ -102,6 +107,8 @@ let appState = null;
 let settingsDraft = null;
 let syncTimer = null;
 let settingsTrailFrame = 0;
+let settingsQuickScrollFrame = 0;
+let tagViewportFadeFrame = 0;
 let tagLabelFitFrame = 0;
 let backgroundIntervalTimer = 0;
 let backgroundDelayTimer = 0;
@@ -109,6 +116,11 @@ let currentBackgroundUrl = "";
 let currentBingImageIndex = -1;
 let authMode = AUTH_MODE_LOGIN;
 let pendingOpenSettingsAfterAuth = false;
+const settingsQuickDragState = {
+  active: false,
+  pointerId: null,
+  pointerOffsetY: 0,
+};
 let authState = {
   loggedIn: false,
   username: "",
@@ -204,7 +216,15 @@ function bindEvents() {
   settingsForm.addEventListener("submit", saveSettings);
   settingsForm.addEventListener("input", handleSettingsInput);
   settingsForm.addEventListener("click", handleSettingsClick);
-  settingsScroll.addEventListener("scroll", queueSettingsTrailUpdate, { passive: true });
+  settingsScroll.addEventListener("scroll", handleSettingsScroll, { passive: true });
+  settingsQuickScroll?.addEventListener("pointerdown", handleSettingsQuickTrackPointerDown);
+  settingsQuickThumb?.addEventListener("pointerdown", handleSettingsQuickThumbPointerDown);
+  window.addEventListener("pointermove", handleSettingsQuickThumbPointerMove);
+  window.addEventListener("pointerup", handleSettingsQuickThumbPointerUp);
+  window.addEventListener("pointercancel", handleSettingsQuickThumbPointerUp);
+  window.addEventListener("scroll", queueTagViewportFadeUpdate, { passive: true });
+  window.addEventListener("resize", queueSettingsQuickScrollUpdate, { passive: true });
+  window.addEventListener("resize", queueTagViewportFadeUpdate, { passive: true });
   window.addEventListener("resize", queueTagLabelFit, { passive: true });
   siteTitleDisplay.addEventListener("click", () => {
     void refreshBackgroundNow({ manual: true, force: true });
@@ -547,6 +567,7 @@ function applyState(payload) {
   renderTagBoard();
   renderHistoryList(searchInput.value);
   renderEngineMenu();
+  queueTagViewportFadeUpdate();
 }
 
 function renderActiveEngineButton() {
@@ -676,6 +697,7 @@ function renderTagBoard() {
     })
     .join("");
   queueTagLabelFit();
+  queueTagViewportFadeUpdate();
 }
 
 function renderHistoryList(keyword = "") {
@@ -685,8 +707,7 @@ function renderHistoryList(keyword = "") {
 
   const query = keyword.trim().toLowerCase();
   const entries = appState.history
-    .filter((entry) => !query || entry.query.toLowerCase().includes(query))
-    .slice(0, 8);
+    .filter((entry) => !query || entry.query.toLowerCase().includes(query));
 
   if (document.activeElement !== searchInput) {
     historyPanel.classList.add("hidden");
@@ -694,6 +715,10 @@ function renderHistoryList(keyword = "") {
   }
 
   if (!entries.length) {
+    if (query) {
+      historyPanel.classList.add("hidden");
+      return;
+    }
     historyPanel.innerHTML = '<div class="empty-state">还没有搜索历史，首次搜索后仅保存在当前浏览器。</div>';
     historyPanel.classList.remove("hidden");
     return;
@@ -861,6 +886,7 @@ function openSettings() {
   settingsDrawer.setAttribute("aria-hidden", "false");
   syncOverlayVisibility();
   queueSettingsTrailUpdate();
+  queueSettingsQuickScrollUpdate();
 }
 
 function closeSettings() {
@@ -873,11 +899,20 @@ function closeSettings() {
   }
   settingsDrawer.classList.add("hidden");
   settingsDrawer.setAttribute("aria-hidden", "true");
+  settingsQuickScroll?.classList.add("hidden");
+  settingsQuickThumb?.classList.remove("is-dragging");
+  settingsQuickDragState.active = false;
+  settingsQuickDragState.pointerId = null;
+  settingsQuickDragState.pointerOffsetY = 0;
   syncOverlayVisibility();
   settingsDraft = null;
   if (settingsTrailFrame) {
     window.cancelAnimationFrame(settingsTrailFrame);
     settingsTrailFrame = 0;
+  }
+  if (settingsQuickScrollFrame) {
+    window.cancelAnimationFrame(settingsQuickScrollFrame);
+    settingsQuickScrollFrame = 0;
   }
 }
 
@@ -980,6 +1015,7 @@ function renderSettingsDrawer() {
     .join("");
 
   queueSettingsTrailUpdate();
+  queueSettingsQuickScrollUpdate();
 }
 
 function handleSettingsInput(event) {
@@ -1598,6 +1634,11 @@ function closeMenus() {
   engineToggleButton.setAttribute("aria-expanded", "false");
 }
 
+function handleSettingsScroll() {
+  queueSettingsTrailUpdate();
+  queueSettingsQuickScrollUpdate();
+}
+
 function queueSettingsTrailUpdate() {
   if (!settingsDraft || settingsDrawer.classList.contains("hidden")) {
     return;
@@ -1659,6 +1700,173 @@ function updateSettingsTrail() {
   }
 
   settingsTrail.textContent = trailText;
+}
+
+function queueSettingsQuickScrollUpdate() {
+  if (!settingsQuickScroll || !settingsQuickThumb || !settingsScroll) {
+    return;
+  }
+
+  if (settingsQuickScrollFrame) {
+    window.cancelAnimationFrame(settingsQuickScrollFrame);
+  }
+
+  settingsQuickScrollFrame = window.requestAnimationFrame(() => {
+    settingsQuickScrollFrame = 0;
+    updateSettingsQuickScroll();
+  });
+}
+
+function updateSettingsQuickScroll() {
+  if (!settingsQuickScroll || !settingsQuickThumb || !settingsScroll) {
+    return;
+  }
+
+  const shouldHide =
+    !settingsDraft ||
+    settingsDrawer.classList.contains("hidden") ||
+    settingsScroll.scrollHeight <= settingsScroll.clientHeight + 1;
+
+  if (shouldHide) {
+    settingsQuickScroll.classList.add("hidden");
+    return;
+  }
+
+  settingsQuickScroll.classList.remove("hidden");
+
+  const trackInset = 3;
+  const trackHeight = Math.max(1, settingsQuickScroll.clientHeight - trackInset * 2);
+  const maxScroll = Math.max(0, settingsScroll.scrollHeight - settingsScroll.clientHeight);
+  const thumbHeight = Math.max(44, Math.round((settingsScroll.clientHeight / settingsScroll.scrollHeight) * trackHeight));
+  const maxThumbTravel = Math.max(0, trackHeight - thumbHeight);
+  const ratio = maxScroll > 0 ? settingsScroll.scrollTop / maxScroll : 0;
+  const thumbTop = trackInset + Math.round(maxThumbTravel * ratio);
+
+  settingsQuickThumb.style.height = `${thumbHeight}px`;
+  settingsQuickThumb.style.top = `${thumbTop}px`;
+}
+
+function scrollSettingsByQuickPointer(clientY, centerThumb = false) {
+  if (!settingsQuickScroll || !settingsQuickThumb || !settingsScroll) {
+    return;
+  }
+
+  const rect = settingsQuickScroll.getBoundingClientRect();
+  const trackInset = 3;
+  const trackHeight = Math.max(1, rect.height - trackInset * 2);
+  const thumbHeight = Math.max(44, settingsQuickThumb.offsetHeight || 0);
+  const maxThumbTravel = Math.max(0, trackHeight - thumbHeight);
+
+  const anchorOffset = centerThumb ? thumbHeight / 2 : settingsQuickDragState.pointerOffsetY;
+  const pointerY = clientY - rect.top - trackInset - anchorOffset;
+  const clampedThumbTop = Math.max(0, Math.min(maxThumbTravel, pointerY));
+  const ratio = maxThumbTravel > 0 ? clampedThumbTop / maxThumbTravel : 0;
+  const maxScroll = Math.max(0, settingsScroll.scrollHeight - settingsScroll.clientHeight);
+
+  settingsScroll.scrollTop = ratio * maxScroll;
+}
+
+function handleSettingsQuickTrackPointerDown(event) {
+  if (!settingsQuickScroll || !settingsQuickThumb) {
+    return;
+  }
+
+  const target = event.target;
+  if (target instanceof Element && target.closest("#settingsQuickThumb")) {
+    return;
+  }
+
+  event.preventDefault();
+  scrollSettingsByQuickPointer(event.clientY, true);
+  queueSettingsQuickScrollUpdate();
+}
+
+function handleSettingsQuickThumbPointerDown(event) {
+  if (!settingsQuickThumb) {
+    return;
+  }
+
+  event.preventDefault();
+  const thumbRect = settingsQuickThumb.getBoundingClientRect();
+  settingsQuickDragState.active = true;
+  settingsQuickDragState.pointerId = event.pointerId;
+  settingsQuickDragState.pointerOffsetY = Math.max(0, Math.min(thumbRect.height, event.clientY - thumbRect.top));
+  settingsQuickThumb.classList.add("is-dragging");
+}
+
+function handleSettingsQuickThumbPointerMove(event) {
+  if (!settingsQuickDragState.active || event.pointerId !== settingsQuickDragState.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
+  scrollSettingsByQuickPointer(event.clientY, false);
+  queueSettingsQuickScrollUpdate();
+}
+
+function handleSettingsQuickThumbPointerUp(event) {
+  if (!settingsQuickDragState.active || event.pointerId !== settingsQuickDragState.pointerId) {
+    return;
+  }
+
+  settingsQuickDragState.active = false;
+  settingsQuickDragState.pointerId = null;
+  settingsQuickDragState.pointerOffsetY = 0;
+  settingsQuickThumb?.classList.remove("is-dragging");
+}
+
+function queueTagViewportFadeUpdate() {
+  if (!tagBoard || !searchStage) {
+    return;
+  }
+
+  if (tagViewportFadeFrame) {
+    window.cancelAnimationFrame(tagViewportFadeFrame);
+  }
+
+  tagViewportFadeFrame = window.requestAnimationFrame(() => {
+    tagViewportFadeFrame = 0;
+    updateTagViewportFade();
+  });
+}
+
+function updateTagViewportFade() {
+  if (!tagBoard || !searchStage) {
+    return;
+  }
+
+  const fadeTargets = Array.from(
+    tagBoard.querySelectorAll(".tag-card, .category-name, .category-expand-btn, .category-mobile-title")
+  );
+  const rows = Array.from(tagBoard.querySelectorAll(".category-row"));
+  if (!fadeTargets.length) {
+    return;
+  }
+
+  for (const row of rows) {
+    row.style.opacity = "";
+    row.style.pointerEvents = "";
+  }
+
+  const searchRect = (searchBar && searchBar.getBoundingClientRect()) || searchStage.getBoundingClientRect();
+  const fadeHiddenLine = searchRect.bottom + TAG_FADE_HIDDEN_OFFSET;
+  const fadeStartLine = fadeHiddenLine + TAG_FADE_START_DISTANCE;
+  const fadeRange = Math.max(1, fadeStartLine - fadeHiddenLine);
+
+  for (const target of fadeTargets) {
+    const rect = target.getBoundingClientRect();
+    let opacity = 1;
+
+    if (rect.top <= fadeHiddenLine) {
+      opacity = 0;
+    } else if (rect.top < fadeStartLine) {
+      opacity = (rect.top - fadeHiddenLine) / fadeRange;
+    }
+
+    const clamped = Math.max(0, Math.min(1, opacity));
+    target.style.opacity = clamped.toFixed(3);
+    target.style.pointerEvents = clamped < 0.02 ? "none" : "";
+  }
 }
 
 function handleSearchBarPointerDown(event) {

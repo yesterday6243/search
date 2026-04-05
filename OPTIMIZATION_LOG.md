@@ -157,3 +157,72 @@
   - 保留最小化拖拽反馈（透明度与边框高亮）。
 - 涉及文件：
   - `public/styles.css`
+
+### 2026-04-06 - Search Bar Sticky-On-Scroll (Bing-like)
+- Symptom:
+  - Search bar kept moving out of viewport while scrolling down, making quick search inconvenient.
+- Root cause:
+  - Search area used normal flow layout without a sticky stop point.
+- Fix:
+  - Changed `.search-panel` to `position: sticky` with top offset.
+  - Search bar now moves up at first and stops at the top once reached.
+  - Added small vertical safe spacing for visual comfort.
+- Files:
+  - `public/styles.css`
+
+### 2026-04-06 - Sticky Reliability Recheck (Crash Recovery Patch)
+- Symptom:
+  - After refresh/scroll, the search bar could still disappear, and first-row tags could be pushed to the top edge.
+- Root cause:
+  - Scroll container and sticky target were split (`.layout` scrolling with sticky stage offset), which made sticky behavior unstable in this layout.
+- Fix:
+  - Switched page scrolling back to `body` (`overflow-y: auto`).
+  - Removed inner scrolling from `.layout` (`overflow: visible`).
+  - Kept search area sticky and increased bottom safety spacing to avoid visual clipping while scrolling.
+- Files:
+  - `public/styles.css`
+
+### 2026-04-06 - Sticky Safe Gap + History Scroll + Settings Quick Slider
+- Symptom:
+  - Search area could enter top status region while scrolling.
+  - Tags visually overlapped right under the search box.
+  - History list only rendered first 8 records, making saved local history hard to reuse.
+  - Settings panel lacked a designed quick-scroll control on the right side.
+- Root cause:
+  - Sticky top offset did not reserve a fixed safe gap under the top bar.
+  - No transition mask between sticky search area and tag grid.
+  - History rendering hard-limited to 8 items in JS.
+  - Settings relied on plain container scrolling only.
+- Fix:
+  - Introduced top bar sticky height and search safe-gap variables; search now stops below top bar.
+  - Added a gradient mask under the sticky search area to remove hard overlap and create fade-out transition.
+  - Removed JS 8-item render slice; history panel now supports internal scroll while keeping 8-row visible height.
+  - Added a custom right-side draggable quick-scroll rail for settings.
+- Files:
+  - `public/styles.css`
+  - `public/app.js`
+  - `public/index.html`
+
+### 2026-04-06 - Tag Fade Logic Switched To Position-Based Targets
+- Symptom:
+  - First visible row looked faded even before scrolling.
+  - Fade was applied by category row, not by each visible tile position.
+- Root cause:
+  - Opacity calculation used `.category-row` top position and a wide early fade range.
+- Fix:
+  - Switched fade calculation to per-element targets (`.tag-card`, category name block, expand button).
+  - Anchored fade line to actual search bar bottom.
+  - Narrowed fade range and reduced hidden offset to avoid early wash-out on first row.
+- Files:
+  - `public/app.js`
+
+### 2026-04-06 - Settings Layer Elevated To Top
+- Symptom:
+  - Settings modal could be visually overlapped by top/header layer in some scroll states.
+- Root cause:
+  - Global layering used relatively low z-index values for settings modal and scrim.
+- Fix:
+  - Raised settings drawer to highest UI layer.
+  - Raised scrim above page content, and kept auth modal above settings when needed.
+- Files:
+  - `public/styles.css`

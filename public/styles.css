@@ -20,6 +20,11 @@
   --radius-pill: 999px;
   --radius-panel: 28px;
   --radius-card: 26px;
+  --topbar-sticky-height: 84px;
+  --search-stick-gap: 12px;
+  --search-stick-top: calc(var(--topbar-sticky-height) + var(--search-stick-gap));
+  --search-fade-height: 44px;
+  --history-visible-items: 8;
   --transition: 180ms ease;
 }
 
@@ -47,7 +52,8 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 body.drawer-open {
@@ -88,7 +94,6 @@ button {
   opacity: var(--bg-overlay-opacity);
 }
 
-.topbar,
 .layout,
 .settings-drawer {
   position: relative;
@@ -96,10 +101,14 @@ button {
 }
 
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 60;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 26px 38px 0;
+  min-height: var(--topbar-sticky-height);
+  padding: 18px 38px 12px;
 }
 
 .brand-mini {
@@ -210,22 +219,23 @@ button {
   width: min(1600px, calc(100vw - 64px));
   margin: 0 auto;
   padding: 42px 0 52px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible;
 }
 
 .search-stage {
   display: flex;
   justify-content: center;
-  padding-top: clamp(64px, 13vh, 140px);
-  position: relative;
-  z-index: 20;
+  margin-top: clamp(64px, 13vh, 140px);
+  padding-bottom: 18px;
+  position: sticky;
+  top: var(--search-stick-top);
+  z-index: 32;
 }
 
 .search-panel {
   position: relative;
   width: min(1280px, 100%);
-  z-index: 30;
+  z-index: 35;
 }
 
 .search-row {
@@ -407,6 +417,9 @@ button {
 .history-panel {
   left: 0;
   right: 84px;
+  max-height: min(calc(var(--history-visible-items) * 66px), calc(100vh - var(--search-stick-top) - 74px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .engine-menu {
@@ -491,7 +504,7 @@ button {
 }
 
 .tag-stage {
-  margin-top: 56px;
+  margin-top: 48px;
   position: relative;
   z-index: 5;
 }
@@ -790,7 +803,7 @@ button {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 3;
+  z-index: 1300;
   width: min(1180px, calc(100vw - 44px));
   max-height: calc(100vh - 44px);
   padding: 0;
@@ -875,7 +888,49 @@ button {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 18px 24px 24px;
+  padding: 18px 42px 24px 24px;
+}
+
+.settings-quick-scroll {
+  position: absolute;
+  top: 104px;
+  right: 10px;
+  bottom: 86px;
+  width: 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  z-index: 2;
+}
+
+.settings-quick-track {
+  position: absolute;
+  inset: 3px;
+  border-radius: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.08));
+}
+
+.settings-quick-thumb {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 3px;
+  min-height: 44px;
+  border: 0;
+  padding: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 208, 148, 0.95), rgba(255, 157, 92, 0.95));
+  box-shadow: 0 10px 22px rgba(255, 157, 92, 0.42);
+  cursor: grab;
+}
+
+.settings-quick-thumb:hover {
+  filter: brightness(1.04);
+}
+
+.settings-quick-thumb.is-dragging {
+  cursor: grabbing;
 }
 
 .settings-section {
@@ -1087,7 +1142,7 @@ button {
 .drawer-scrim {
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: 1200;
   background: rgba(6, 9, 14, 0.52);
   backdrop-filter: blur(4px);
 }
@@ -1097,7 +1152,7 @@ button {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 4;
+  z-index: 1400;
   width: min(520px, calc(100vw - 36px));
   padding: 20px;
   border-radius: 24px;
@@ -1247,9 +1302,13 @@ button {
 }
 
 @media (max-width: 760px) {
+  :root {
+    --topbar-sticky-height: 66px;
+    --search-stick-gap: 8px;
+  }
 
   .topbar {
-    padding: 18px 18px 0;
+    padding: 12px 18px 8px;
   }
 
   .brand-mini {
@@ -1266,7 +1325,9 @@ button {
   }
 
   .search-stage {
-    padding-top: 36px;
+    margin-top: 36px;
+    padding-top: 0;
+    padding-bottom: 12px;
   }
 
   .search-row {
@@ -1279,6 +1340,7 @@ button {
 
   .history-panel {
     right: 0;
+    max-height: min(calc(var(--history-visible-items) * 62px), calc(100vh - var(--search-stick-top) - 58px));
   }
 
   .engine-menu {
@@ -1317,6 +1379,10 @@ button {
 
   .settings-scroll {
     padding: 14px 16px 16px;
+  }
+
+  .settings-quick-scroll {
+    display: none !important;
   }
 
   .settings-footer {
