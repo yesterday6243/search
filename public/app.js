@@ -36,9 +36,15 @@ const tagOpacityInput = document.getElementById("tagOpacityInput");
 const tagOpacityValue = document.getElementById("tagOpacityValue");
 const backgroundProviderInput = document.getElementById("backgroundProviderInput");
 const backgroundSeedInput = document.getElementById("backgroundSeedInput");
+const backgroundSeedPresetField = document.getElementById("backgroundSeedPresetField");
+const backgroundSeedPresetInput = document.getElementById("backgroundSeedPresetInput");
+const backgroundSeedPresetHint = document.getElementById("backgroundSeedPresetHint");
 const backgroundCustomUrlInput = document.getElementById("backgroundCustomUrlInput");
 const backgroundOpacityInput = document.getElementById("backgroundOpacityInput");
 const backgroundOpacityValue = document.getElementById("backgroundOpacityValue");
+const backgroundBingRecentCountField = document.getElementById("backgroundBingRecentCountField");
+const backgroundBingRecentCountInput = document.getElementById("backgroundBingRecentCountInput");
+const backgroundBingRecentCountValue = document.getElementById("backgroundBingRecentCountValue");
 const backgroundSeedField = document.getElementById("backgroundSeedField");
 const backgroundUrlField = document.getElementById("backgroundUrlField");
 const authModal = document.getElementById("authModal");
@@ -66,6 +72,31 @@ const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
 const TAG_FADE_START_DISTANCE = 34;
 const TAG_FADE_HIDDEN_OFFSET = 2;
+const CATEGORY_DROP_EDGE_PADDING = 16;
+const CATEGORY_DROP_END_ZONE = 42;
+const CATEGORY_DROP_END_OFFSET = 14;
+const BING_RECENT_COUNT_MIN = 1;
+const BING_RECENT_COUNT_MAX = 8;
+const BACKGROUND_SEED_PRESETS = [
+  { value: "amber-dawn", label: "暖金晨光", description: "偏暖、柔和、通用背景。" },
+  { value: "mist-forest", label: "薄雾森林", description: "自然系、低对比、护眼。" },
+  { value: "ocean-breeze", label: "海风青蓝", description: "清爽冷色、适合科技内容。" },
+  { value: "city-night", label: "城市夜景", description: "高反差、霓虹感更强。" },
+  { value: "minimal-paper", label: "纸感极简", description: "纯净背景，视觉干扰低。" },
+  { value: "mountain-air", label: "山野空气", description: "自然风景，层次柔和。" },
+  { value: "desert-light", label: "荒漠暖调", description: "暖色氛围、质感偏硬。" },
+  { value: "nordic-cold", label: "北欧冷调", description: "冷灰干净、偏克制风格。" },
+  { value: "retro-film", label: "复古胶片", description: "偏棕与颗粒感氛围。" },
+  { value: "neon-street", label: "霓虹街景", description: "对比强，适合夜间风格。" },
+  { value: "sunset-cliff", label: "落日山崖", description: "暖橙晚霞、空间感强。" },
+  { value: "snow-field", label: "雪地云层", description: "亮背景、极简清爽。" },
+  { value: "ink-water", label: "水墨流动", description: "东方意境、低饱和过渡。" },
+  { value: "future-grid", label: "未来网格", description: "数字感、偏抽象背景。" },
+  { value: "rain-window", label: "雨窗朦胧", description: "柔焦氛围、细节弱化。" },
+  { value: "stone-cave", label: "岩洞纹理", description: "深色肌理、层次丰富。" },
+];
+const DEFAULT_ICON_DATA_URL =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d6dde8'/%3E%3Cstop offset='1' stop-color='%23b9c4d4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='128' height='128' rx='34' fill='url(%23g)'/%3E%3Cpath d='M44 64c0-11 9-20 20-20h20v12H64a8 8 0 1 0 0 16h20v12H64c-11 0-20-9-20-20Z' fill='%23fff'/%3E%3Ccircle cx='92' cy='64' r='12' fill='%23ffffffcc'/%3E%3C/svg%3E";
 const USER_LIMIT = 50;
 const AUTH_MODE_LOGIN = "login";
 const AUTH_MODE_REGISTER = "register";
@@ -80,6 +111,7 @@ const GUEST_STATE = {
       seed: "linen-warm",
       customUrl: "",
       overlayOpacity: 100,
+      bingRecentCount: 8,
     },
     historyLimit: 100,
   },
@@ -100,7 +132,7 @@ const dragState = {
 const categoryDragState = {
   categoryId: "",
   targetCategoryId: "",
-  dropPosition: "before",
+  dropPosition: "center",
 };
 
 let appState = null;
@@ -129,17 +161,16 @@ let authState = {
   canRegister: true,
 };
 let iconSourceCache = loadIconSourceCache();
+let categoryDropIndicator = null;
 let currentActiveEngineId = "";
 const engineButtonIconNodeCache = new Map();
 const engineRenderKeyCache = new Map();
-let bingBackgroundCache = {
-  expiresAt: 0,
-  images: [],
-};
+const bingBackgroundCacheByCount = new Map();
 
 boot();
 
 async function boot() {
+  ensureCategoryDropIndicator();
   bindEvents();
   await refreshAuthStatus();
   if (authState.loggedIn) {
@@ -275,6 +306,16 @@ function bindEvents() {
   tagBoard.addEventListener("dragover", handleTagDragOver);
   tagBoard.addEventListener("drop", handleTagDrop);
   tagBoard.addEventListener("dragend", handleTagDragEnd);
+}
+
+function ensureCategoryDropIndicator() {
+  if (!tagBoard || categoryDropIndicator?.isConnected) {
+    return;
+  }
+  categoryDropIndicator = document.createElement("div");
+  categoryDropIndicator.className = "category-drop-indicator";
+  categoryDropIndicator.setAttribute("aria-hidden", "true");
+  tagBoard.appendChild(categoryDropIndicator);
 }
 
 function createGuestPayload() {
@@ -549,8 +590,10 @@ function applyState(payload) {
   const placeholder = normalizePlaceholder(appState.settings.subtitle);
   const searchBarHeight = normalizeSearchBarHeight(appState.settings.searchBarHeight);
   const tagOpacity = normalizeTagOpacity(appState.settings.tagOpacity);
+  const bingRecentCount = normalizeBingRecentCount(appState.settings?.background?.bingRecentCount);
   appState.settings.searchBarHeight = searchBarHeight;
   appState.settings.tagOpacity = tagOpacity;
+  appState.settings.background.bingRecentCount = bingRecentCount;
 
   document.title = appState.settings.siteTitle || BRAND_NAME;
   siteTitleDisplay.textContent = BRAND_NAME;
@@ -567,6 +610,7 @@ function applyState(payload) {
   renderTagBoard();
   renderHistoryList(searchInput.value);
   renderEngineMenu();
+  primeEngineButtonIcons();
   queueTagViewportFadeUpdate();
 }
 
@@ -606,9 +650,34 @@ function renderActiveEngineButton() {
   engineToggleButton.setAttribute("aria-label", `切换搜索引擎，当前为 ${activeEngine.name}`);
 }
 
+function primeEngineButtonIcons() {
+  if (!appState?.engines?.length) {
+    return;
+  }
+
+  appState.engines.forEach((engine) => {
+    const iconData = getFaviconUrlFromTemplate(engine.urlTemplate);
+    const firstSource = iconData.sources?.[0] || "";
+    const renderKey = `${engine.id}|${firstSource}`;
+    const existing = engineButtonIconNodeCache.get(engine.id) || null;
+    if (existing && engineRenderKeyCache.get(engine.id) === renderKey) {
+      return;
+    }
+
+    engineRenderKeyCache.set(engine.id, renderKey);
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = buildIconMarkup(iconData, engine.name).trim();
+    const node = wrapper.firstElementChild;
+    if (node) {
+      engineButtonIconNodeCache.set(engine.id, node);
+    }
+  });
+}
+
 function renderTagBoard() {
   if (!appState.categories.length) {
     tagBoard.innerHTML = '<div class="empty-state">当前还没有标签分类，去右上角设置里添加即可。</div>';
+    ensureCategoryDropIndicator();
     return;
   }
 
@@ -696,6 +765,7 @@ function renderTagBoard() {
       `;
     })
     .join("");
+  ensureCategoryDropIndicator();
   queueTagLabelFit();
   queueTagViewportFadeUpdate();
 }
@@ -770,8 +840,18 @@ function renderEngineMenu() {
 }
 
 function renderBackgroundFieldVisibility(background) {
-  backgroundSeedField.classList.toggle("hidden", background.provider !== "picsum_seed");
-  backgroundUrlField.classList.toggle("hidden", background.provider !== "custom_url");
+  const provider = background?.provider || "bing_hourly";
+  const isPicsum = provider === "picsum_seed";
+  const isBing = provider === "bing_hourly";
+  const isCustom = provider === "custom_url";
+  const matchedPreset = BACKGROUND_SEED_PRESETS.find(
+    (item) => item.value === String(background?.seed || "").trim()
+  );
+  const shouldShowCustomSeed = isPicsum && !matchedPreset;
+  backgroundSeedField.classList.toggle("hidden", !shouldShowCustomSeed);
+  backgroundSeedPresetField?.classList.toggle("hidden", !isPicsum);
+  backgroundBingRecentCountField?.classList.toggle("hidden", !isBing);
+  backgroundUrlField.classList.toggle("hidden", !isCustom);
 }
 
 function normalizeOverlayOpacity(value) {
@@ -889,6 +969,53 @@ function openSettings() {
   queueSettingsQuickScrollUpdate();
 }
 
+function normalizeBingRecentCount(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 8;
+  }
+  return Math.max(BING_RECENT_COUNT_MIN, Math.min(BING_RECENT_COUNT_MAX, Math.round(numeric)));
+}
+
+function updateBingRecentCountLabel(value) {
+  if (!backgroundBingRecentCountValue) {
+    return;
+  }
+  backgroundBingRecentCountValue.textContent = `${normalizeBingRecentCount(value)} 张`;
+}
+
+function renderSeedPresetOptions(currentSeed = "") {
+  if (!backgroundSeedPresetInput) {
+    return;
+  }
+  const normalizedCurrent = String(currentSeed || "").trim();
+  const options = [
+    '<option value="">自定义（保持当前输入）</option>',
+    ...BACKGROUND_SEED_PRESETS.map(
+      (item) =>
+        `<option value="${escapeAttribute(item.value)}">${escapeHtml(item.value)} · ${escapeHtml(item.label)}</option>`
+    ),
+  ];
+  backgroundSeedPresetInput.innerHTML = options.join("");
+  const matched = BACKGROUND_SEED_PRESETS.find((item) => item.value === normalizedCurrent);
+  backgroundSeedPresetInput.value = matched ? matched.value : "";
+  updateSeedPresetHint(matched, normalizedCurrent);
+}
+
+function updateSeedPresetHint(preset, currentSeed = "") {
+  if (!backgroundSeedPresetHint) {
+    return;
+  }
+  if (preset) {
+    backgroundSeedPresetHint.textContent = `${preset.label}：${preset.description}`;
+    return;
+  }
+  const seedText = String(currentSeed || "").trim();
+  backgroundSeedPresetHint.textContent = seedText
+    ? `当前为自定义种子：${seedText}`
+    : "选择后会自动填充到上方随机种子。";
+}
+
 function closeSettings() {
   if (appState?.settings?.background) {
     applyBackgroundOverlayOpacity(appState.settings.background.overlayOpacity);
@@ -934,6 +1061,13 @@ function renderSettingsDrawer() {
   backgroundProviderInput.value = settingsDraft.settings.background.provider;
   backgroundSeedInput.value = settingsDraft.settings.background.seed;
   backgroundCustomUrlInput.value = settingsDraft.settings.background.customUrl;
+  renderSeedPresetOptions(settingsDraft.settings.background.seed);
+  const bingRecentCount = normalizeBingRecentCount(settingsDraft.settings.background.bingRecentCount);
+  settingsDraft.settings.background.bingRecentCount = bingRecentCount;
+  if (backgroundBingRecentCountInput) {
+    backgroundBingRecentCountInput.value = String(bingRecentCount);
+  }
+  updateBingRecentCountLabel(bingRecentCount);
   const overlayOpacity = normalizeOverlayOpacity(settingsDraft.settings.background.overlayOpacity);
   settingsDraft.settings.background.overlayOpacity = overlayOpacity;
   backgroundOpacityInput.value = String(overlayOpacity);
@@ -1059,6 +1193,33 @@ function handleSettingsInput(event) {
 
   if (target === backgroundSeedInput) {
     settingsDraft.settings.background.seed = target.value;
+    const matched = BACKGROUND_SEED_PRESETS.find((item) => item.value === target.value.trim());
+    if (backgroundSeedPresetInput) {
+      backgroundSeedPresetInput.value = matched ? matched.value : "";
+    }
+    updateSeedPresetHint(matched, target.value);
+    renderBackgroundFieldVisibility(settingsDraft.settings.background);
+    return;
+  }
+
+  if (target === backgroundSeedPresetInput) {
+    const selected = BACKGROUND_SEED_PRESETS.find((item) => item.value === target.value);
+    if (selected) {
+      settingsDraft.settings.background.seed = selected.value;
+      backgroundSeedInput.value = selected.value;
+      updateSeedPresetHint(selected, selected.value);
+    } else {
+      updateSeedPresetHint(null, backgroundSeedInput.value);
+    }
+    renderBackgroundFieldVisibility(settingsDraft.settings.background);
+    return;
+  }
+
+  if (target === backgroundBingRecentCountInput) {
+    const count = normalizeBingRecentCount(target.value);
+    settingsDraft.settings.background.bingRecentCount = count;
+    backgroundBingRecentCountInput.value = String(count);
+    updateBingRecentCountLabel(count);
     return;
   }
 
@@ -1263,7 +1424,7 @@ function handleTagDragStart(event) {
     const row = categoryHandle.closest(".category-row");
     categoryDragState.categoryId = categoryHandle.dataset.categoryId;
     categoryDragState.targetCategoryId = "";
-    categoryDragState.dropPosition = "before";
+    categoryDragState.dropPosition = "center";
     row?.classList.add("is-category-dragging");
     tagBoard.classList.add("is-dragging-categories");
     clearTagDragState();
@@ -1461,58 +1622,49 @@ function moveCategoryLink(fromCategoryId, fromLinkId, toCategoryId, toLinkId = "
 }
 
 function handleCategoryDragOver(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) {
-    return;
-  }
-  const targetRow = target.closest(".category-row");
-  if (!targetRow) {
+  if (!categoryDragState.categoryId) {
     return;
   }
 
-  const targetCategoryId = targetRow.dataset.categoryId || "";
-  if (!targetCategoryId || targetCategoryId === categoryDragState.categoryId) {
+  const dropTarget = resolveCategoryDropTarget(event.clientX, event.clientY);
+  if (!dropTarget) {
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "none";
+    }
+    clearCategoryDropHints();
+    categoryDragState.targetCategoryId = "";
+    categoryDragState.dropPosition = "center";
     return;
   }
 
   event.preventDefault();
-  const rect = targetRow.getBoundingClientRect();
-  const dropPosition = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
-  categoryDragState.targetCategoryId = targetCategoryId;
-  categoryDragState.dropPosition = dropPosition;
-
-  clearCategoryDropHints();
-  targetRow.classList.add(
-    dropPosition === "before" ? "is-category-drop-before" : "is-category-drop-after"
-  );
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+  categoryDragState.targetCategoryId = dropTarget.targetCategoryId;
+  categoryDragState.dropPosition = dropTarget.position;
+  showCategoryDropIndicator(dropTarget);
 }
 
 function handleCategoryDrop(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) {
-    return;
-  }
-  const targetRow = target.closest(".category-row");
-  const targetCategoryId = targetRow?.dataset.categoryId || categoryDragState.targetCategoryId;
-  if (!targetCategoryId || targetCategoryId === categoryDragState.categoryId) {
+  const rows = Array.from(tagBoard.querySelectorAll(".category-row"));
+  const pointerBlocked = isPointerInsideCategoryHead(rows, event.clientX, event.clientY);
+  const resolvedTarget = pointerBlocked
+    ? null
+    : resolveCategoryDropTarget(event.clientX, event.clientY);
+  const canUseStoredTarget =
+    !pointerBlocked && isPointerWithinCategoryDropArea(event.clientX, event.clientY);
+  const targetCategoryId = resolvedTarget?.targetCategoryId ||
+    (canUseStoredTarget ? categoryDragState.targetCategoryId : "");
+  const dropPosition = resolvedTarget?.position ||
+    (canUseStoredTarget ? categoryDragState.dropPosition : "");
+  if (!targetCategoryId || !dropPosition || targetCategoryId === categoryDragState.categoryId) {
     clearCategoryDragState();
     return;
   }
 
   event.preventDefault();
-  const rect = targetRow?.getBoundingClientRect();
-  const dropPosition =
-    rect && Number.isFinite(event.clientY)
-      ? event.clientY < rect.top + rect.height / 2
-        ? "before"
-        : "after"
-      : categoryDragState.dropPosition;
-
-  const moved = reorderCategoriesById(
-    categoryDragState.categoryId,
-    targetCategoryId,
-    dropPosition
-  );
+  const moved = reorderCategoriesById(categoryDragState.categoryId, targetCategoryId, dropPosition);
   clearCategoryDragState();
 
   if (!moved) {
@@ -1531,10 +1683,11 @@ function handleCategoryDrop(event) {
 
 function clearCategoryDropHints() {
   tagBoard
-    .querySelectorAll(".category-row.is-category-drop-before, .category-row.is-category-drop-after")
+    .querySelectorAll(".category-row.is-category-drop-before, .category-row.is-category-drop-after, .category-row.is-category-drop-center")
     .forEach((item) => {
-      item.classList.remove("is-category-drop-before", "is-category-drop-after");
+      item.classList.remove("is-category-drop-before", "is-category-drop-after", "is-category-drop-center");
     });
+  hideCategoryDropIndicator();
 }
 
 function clearCategoryDragState() {
@@ -1545,10 +1698,10 @@ function clearCategoryDragState() {
   tagBoard.classList.remove("is-dragging-categories");
   categoryDragState.categoryId = "";
   categoryDragState.targetCategoryId = "";
-  categoryDragState.dropPosition = "before";
+  categoryDragState.dropPosition = "center";
 }
 
-function reorderCategoriesById(fromCategoryId, toCategoryId, position = "before") {
+function reorderCategoriesById(fromCategoryId, toCategoryId, position = "center") {
   const nextCategories = structuredClone(appState.categories);
   const fromIndex = nextCategories.findIndex((item) => item.id === fromCategoryId);
   const toIndex = nextCategories.findIndex((item) => item.id === toCategoryId);
@@ -1557,9 +1710,10 @@ function reorderCategoriesById(fromCategoryId, toCategoryId, position = "before"
   }
 
   const [moved] = nextCategories.splice(fromIndex, 1);
-  let insertIndex = position === "after" ? toIndex + 1 : toIndex;
-  if (fromIndex < insertIndex) {
-    insertIndex -= 1;
+  const targetIndexAfterRemoval = fromIndex < toIndex ? toIndex - 1 : toIndex;
+  let insertIndex = targetIndexAfterRemoval;
+  if (position === "after") {
+    insertIndex = targetIndexAfterRemoval + 1;
   }
   insertIndex = Math.max(0, Math.min(nextCategories.length, insertIndex));
   nextCategories.splice(insertIndex, 0, moved);
@@ -1567,6 +1721,164 @@ function reorderCategoriesById(fromCategoryId, toCategoryId, position = "before"
   const before = appState.categories.map((item) => item.id).join("|");
   const after = nextCategories.map((item) => item.id).join("|");
   return before === after ? null : nextCategories;
+}
+
+function resolveCategoryDropTarget(pointerX, pointerY) {
+  if (!tagBoard || !Number.isFinite(pointerX) || !Number.isFinite(pointerY)) {
+    return null;
+  }
+
+  const rows = Array.from(tagBoard.querySelectorAll(".category-row"));
+  if (rows.length < 2 || isPointerInsideCategoryHead(rows, pointerX, pointerY)) {
+    return null;
+  }
+
+  const slots = buildCategoryDropSlots(rows);
+  let bestSlot = null;
+  for (const slot of slots) {
+    if (!slot.targetCategoryId || pointerY < slot.captureTop || pointerY > slot.captureBottom) {
+      continue;
+    }
+    const distance = Math.abs(pointerY - slot.lineY);
+    if (!bestSlot || distance < bestSlot.distance) {
+      bestSlot = { ...slot, distance };
+    }
+  }
+
+  if (!bestSlot) {
+    return null;
+  }
+
+  const moved = reorderCategoriesById(categoryDragState.categoryId, bestSlot.targetCategoryId, bestSlot.position);
+  if (!moved) {
+    return null;
+  }
+
+  return bestSlot;
+}
+
+function buildCategoryDropSlots(rows) {
+  const slots = [];
+  const boardRect = tagBoard.getBoundingClientRect();
+  for (let index = 0; index <= rows.length; index += 1) {
+    const previousRow = rows[index - 1] || null;
+    const nextRow = rows[index] || null;
+    const referenceRow = nextRow || previousRow;
+    if (!referenceRow) {
+      continue;
+    }
+
+    const indicatorRect = getCategoryDropIndicatorRect(referenceRow);
+    if (!indicatorRect) {
+      continue;
+    }
+
+    if (previousRow && nextRow) {
+      const previousRect = previousRow.getBoundingClientRect();
+      const nextRect = nextRow.getBoundingClientRect();
+      const gap = Math.max(8, nextRect.top - previousRect.bottom);
+      slots.push({
+        targetCategoryId: nextRow.dataset.categoryId || "",
+        position: "before",
+        lineY: previousRect.bottom + gap / 2,
+        captureTop: previousRect.bottom - CATEGORY_DROP_EDGE_PADDING,
+        captureBottom: nextRect.top + CATEGORY_DROP_EDGE_PADDING,
+        lineLeft: indicatorRect.left - boardRect.left,
+        lineWidth: indicatorRect.width,
+      });
+      continue;
+    }
+
+    if (nextRow) {
+      const nextRect = nextRow.getBoundingClientRect();
+      slots.push({
+        targetCategoryId: nextRow.dataset.categoryId || "",
+        position: "before",
+        lineY: nextRect.top - CATEGORY_DROP_END_OFFSET,
+        captureTop: nextRect.top - CATEGORY_DROP_END_ZONE,
+        captureBottom: nextRect.top + CATEGORY_DROP_EDGE_PADDING,
+        lineLeft: indicatorRect.left - boardRect.left,
+        lineWidth: indicatorRect.width,
+      });
+      continue;
+    }
+
+    const previousRect = previousRow.getBoundingClientRect();
+    slots.push({
+      targetCategoryId: previousRow.dataset.categoryId || "",
+      position: "after",
+      lineY: previousRect.bottom + CATEGORY_DROP_END_OFFSET,
+      captureTop: previousRect.bottom - CATEGORY_DROP_EDGE_PADDING,
+      captureBottom: previousRect.bottom + CATEGORY_DROP_END_ZONE,
+      lineLeft: indicatorRect.left - boardRect.left,
+      lineWidth: indicatorRect.width,
+    });
+  }
+  return slots;
+}
+
+function getCategoryDropIndicatorRect(row) {
+  if (!(row instanceof Element)) {
+    return null;
+  }
+  const middle = row.querySelector(".category-middle");
+  const rect = (middle instanceof Element ? middle : row).getBoundingClientRect();
+  if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.width) || rect.width <= 0) {
+    return null;
+  }
+  return rect;
+}
+
+function isPointerInsideCategoryHead(rows, pointerX, pointerY) {
+  return rows.some((row) => {
+    const head = row.querySelector(".category-head");
+    const name = row.querySelector(".category-head .category-name");
+    const anchor = name instanceof Element ? name : head;
+    if (!(anchor instanceof Element)) {
+      return false;
+    }
+    const rect = anchor.getBoundingClientRect();
+    return (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      pointerX >= rect.left &&
+      pointerX <= rect.right &&
+      pointerY >= rect.top &&
+      pointerY <= rect.bottom
+    );
+  });
+}
+
+function isPointerWithinCategoryDropArea(pointerX, pointerY) {
+  if (!tagBoard || !Number.isFinite(pointerX) || !Number.isFinite(pointerY)) {
+    return false;
+  }
+  const boardRect = tagBoard.getBoundingClientRect();
+  return (
+    pointerX >= boardRect.left &&
+    pointerX <= boardRect.right &&
+    pointerY >= boardRect.top - CATEGORY_DROP_END_ZONE &&
+    pointerY <= boardRect.bottom + CATEGORY_DROP_END_ZONE
+  );
+}
+
+function showCategoryDropIndicator(dropTarget) {
+  ensureCategoryDropIndicator();
+  if (!categoryDropIndicator || !dropTarget) {
+    return;
+  }
+  const boardRect = tagBoard.getBoundingClientRect();
+  categoryDropIndicator.style.left = `${Math.max(0, dropTarget.lineLeft)}px`;
+  categoryDropIndicator.style.width = `${Math.max(0, dropTarget.lineWidth)}px`;
+  categoryDropIndicator.style.top = `${dropTarget.lineY - boardRect.top}px`;
+  categoryDropIndicator.classList.add("is-visible");
+}
+
+function hideCategoryDropIndicator() {
+  if (!categoryDropIndicator) {
+    return;
+  }
+  categoryDropIndicator.classList.remove("is-visible");
 }
 
 function queueTagLabelFit() {
@@ -1926,7 +2238,8 @@ async function refreshBackgroundNow({ manual = false, force = false } = {}) {
 }
 
 async function applyBingBackground({ manual = false, force = false } = {}) {
-  const images = await fetchBingBackgroundImages(force);
+  const recentCount = normalizeBingRecentCount(appState?.settings?.background?.bingRecentCount);
+  const images = await fetchBingBackgroundImages(force, recentCount);
   if (!images.length) {
     return false;
   }
@@ -1951,14 +2264,16 @@ async function applyBingBackground({ manual = false, force = false } = {}) {
   return true;
 }
 
-async function fetchBingBackgroundImages(force = false) {
+async function fetchBingBackgroundImages(force = false, recentCount = 8) {
+  const safeRecentCount = normalizeBingRecentCount(recentCount);
   const now = Date.now();
-  if (!force && bingBackgroundCache.images.length && now < bingBackgroundCache.expiresAt) {
-    return bingBackgroundCache.images;
+  const cached = bingBackgroundCacheByCount.get(safeRecentCount);
+  if (!force && cached?.images?.length && now < cached.expiresAt) {
+    return cached.images;
   }
 
   try {
-    const response = await fetch("/api/background/bing");
+    const response = await fetch(`/api/background/bing?n=${safeRecentCount}`);
     if (!response.ok) {
       throw new Error(`bing api failed: ${response.status}`);
     }
@@ -1974,16 +2289,17 @@ async function fetchBingBackgroundImages(force = false) {
       : [];
 
     if (images.length) {
-      bingBackgroundCache = {
+      bingBackgroundCacheByCount.set(safeRecentCount, {
         expiresAt: now + 15 * 60 * 1000,
         images,
-      };
+      });
+      return images;
     }
   } catch (error) {
     console.error(error);
   }
 
-  return bingBackgroundCache.images;
+  return cached?.images || [];
 }
 
 function scheduleBackgroundRotation() {
@@ -2147,21 +2463,19 @@ function getActiveEngine() {
 }
 
 function getFaviconUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return buildIconSources(url);
-  } catch {
+  const url = parseUrlWithFallback(rawUrl);
+  if (!url) {
     return { host: "", sources: [] };
   }
+  return buildIconSources(url);
 }
 
 function getFaviconUrlFromTemplate(templateUrl) {
-  try {
-    const url = new URL(templateUrl.replace("%s", "search"));
-    return buildIconSources(url);
-  } catch {
+  const url = parseUrlWithFallback(String(templateUrl || "").replace("%s", "search"));
+  if (!url) {
     return { host: "", sources: [] };
   }
+  return buildIconSources(url);
 }
 
 function getHostFromTemplate(templateUrl) {
@@ -2178,10 +2492,14 @@ function buildIconSources(url) {
     return { host: "", sources: [] };
   }
   const native = `${url.origin}/favicon.ico`;
+  const nativePng = `${url.origin}/favicon.png`;
   const duck = `https://icons.duckduckgo.com/ip3/${host}.ico`;
   const s2 = `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}`;
+  const s2DomainUrl = `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(url.origin)}`;
+  const iconHorse = `https://icon.horse/icon/${encodeURIComponent(host)}`;
+  const unavatar = `https://unavatar.io/${encodeURIComponent(host)}`;
   const cached = iconSourceCache[host] || "";
-  const sources = [cached, native, duck, s2]
+  const sources = [cached, native, nativePng, duck, s2, s2DomainUrl, iconHorse, unavatar]
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index);
   return { host, sources };
@@ -2197,9 +2515,13 @@ function buildIconMarkup(iconUrl, _fallback, className = "engine-button-icon") {
       : iconUrl
         ? [iconUrl]
         : [];
-  const imageMarkup = iconSources.length
-    ? `<img class="mx-icon-image" src="${escapeAttribute(iconSources[0])}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(iconSources.slice(1).join("|"))}" alt="" loading="eager" fetchpriority="low" decoding="async" onload="window.__mxIconLoaded(this);" onerror="window.__mxIconFallback(this);" />`
-    : "";
+  const hasSources = iconSources.length > 0;
+  const firstSource = hasSources ? normalizeIconSource(iconSources[0]) : "";
+  const cachedSource = iconHost ? normalizeIconSource(iconSourceCache[iconHost] || "") : "";
+  const readyClass = cachedSource && firstSource && cachedSource === firstSource ? " is-ready" : "";
+  const imageMarkup = hasSources
+    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(firstSource || iconSources[0])}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(iconSources.slice(1).join("|"))}" alt="" loading="eager" fetchpriority="low" decoding="async" onload="window.__mxIconLoaded(this);" onerror="window.__mxIconFallback(this);" />`
+    : `<img class="mx-icon-image is-ready" src="${DEFAULT_ICON_DATA_URL}" alt="" loading="eager" fetchpriority="low" decoding="async" />`;
 
   return `
     <span class="${className}">
@@ -2246,7 +2568,12 @@ window.__mxIconFallback = function handleIconFallback(imageNode) {
     .filter(Boolean);
 
   if (!chain.length) {
-    imageNode.remove();
+    imageNode.onerror = null;
+    imageNode.onload = null;
+    imageNode.dataset.iconHost = "";
+    imageNode.dataset.iconChain = "";
+    imageNode.classList.add("is-ready");
+    imageNode.src = DEFAULT_ICON_DATA_URL;
     return;
   }
 
@@ -2254,6 +2581,26 @@ window.__mxIconFallback = function handleIconFallback(imageNode) {
   imageNode.dataset.iconChain = rest.join("|");
   imageNode.src = next;
 };
+
+function parseUrlWithFallback(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    return new URL(trimmed);
+  } catch {
+    try {
+      return new URL(`https://${trimmed}`);
+    } catch {
+      return null;
+    }
+  }
+}
 
 function syncIconNodesByHost(host, source, sourceNode = null) {
   const normalizedHost = sanitizeIconHost(host);

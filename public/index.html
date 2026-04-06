@@ -150,8 +150,26 @@
               </select>
             </label>
             <label class="field" id="backgroundSeedField">
-              <span>随机种子</span>
+              <span>随机种子（可自定义）</span>
               <input id="backgroundSeedInput" type="text" maxlength="60" />
+              <small class="field-help">种子相同会生成同一系列随机图，后面会自动拼接小时标识来轮换。</small>
+            </label>
+            <label class="field" id="backgroundSeedPresetField">
+              <span>内置种子（含说明）</span>
+              <select id="backgroundSeedPresetInput"></select>
+              <small class="field-help" id="backgroundSeedPresetHint">选择后会自动填充到上方随机种子。</small>
+            </label>
+            <label class="field" id="backgroundBingRecentCountField">
+              <span>Bing 最近图片池（1-8 张） <strong id="backgroundBingRecentCountValue">8 张</strong></span>
+              <input
+                id="backgroundBingRecentCountInput"
+                type="range"
+                min="1"
+                max="8"
+                step="1"
+                value="8"
+              />
+              <small class="field-help">数值越大，Bing 每小时/手动切换时可选的最近图片范围越大。</small>
             </label>
             <label class="field" id="backgroundUrlField">
               <span>图片地址</span>

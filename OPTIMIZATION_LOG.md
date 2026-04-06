@@ -226,3 +226,123 @@
   - Raised scrim above page content, and kept auth modal above settings when needed.
 - Files:
   - `public/styles.css`
+
+### 2026-04-06 - Icon Reliability + Engine Switch Flicker + Hover Float Restore
+- Symptom:
+  - 部分书签图标偶发加载失败，出现空白图标位。
+  - 切换搜索引擎时右侧图标会出现闪一下的观感。
+  - 标签 hover 上浮效果缺失。
+  - 恢复上浮后需要避免折叠行顶部被裁切。
+- Root cause:
+  - 图标源链覆盖不足，且无最终兜底图标。
+  - 引擎按钮图标未提前预热，首次切换可能触发重新加载。
+  - 卡片 hover transform 被关闭。
+  - 折叠态容器顶部安全间距不足，浮动时易被裁切。
+- Fix:
+  - 增强 favicon 源链（native ico/png + duckduckgo + google s2 + icon.horse + unavatar）。
+  - 新增宽松 URL 解析（无协议时自动尝试 `https://`）。
+  - 无可用源时使用内置 SVG 默认图标，避免空白。
+  - 增加引擎按钮图标预热缓存，降低切换闪动。
+  - 恢复标签 hover 上浮与阴影，并增加折叠态顶部安全空间避免溢出。
+- Files:
+  - `public/app.js`
+  - `public/styles.css`
+
+### 2026-04-06 - Category Row Drop Logic Refined
+- Symptom:
+  - Dropping a category onto the middle of another category icon could place it after the target row when dragging downward.
+  - The center drop zone was too broad because it only checked vertical position, not whether the pointer was actually over the category icon.
+  - Center drop feedback used a horizontal line, which made the reorder hint look inconsistent with before/after insertion lines.
+- Root cause:
+  - `center` drop mapped to a direction-dependent insert index instead of consistently taking the target row slot.
+  - Hit testing for `center` ignored pointer X position.
+  - Center feedback reused line-based affordance instead of target-row highlighting.
+- Fix:
+  - Made `center` drop always insert into the hovered row position.
+  - Limited `center` activation to the actual category icon center zone.
+  - Switched center feedback from a full-width line to category icon highlighting, keeping before/after as single insertion lines.
+- Files:
+  - `public/app.js`
+  - `public/styles.css`
+
+### 2026-04-06 - Category Drag Insert Slots Reworked
+- Symptom:
+  - Reordering categories still felt inconsistent near row boundaries.
+  - The gap between two rows could visually show duplicated insertion lines.
+  - Hovering the category icon itself did not clearly behave as a forbidden drop zone.
+- Root cause:
+  - Drop feedback still depended on per-row pseudo-elements instead of a single shared insertion slot.
+  - Valid drop zones were inferred from row areas, not from explicit row-gap slots.
+  - Pointer blocking on category icons was not aligned with the intended product interaction.
+- Fix:
+  - Reworked category drag detection around explicit inter-row insertion slots.
+  - Added a single shared drop indicator centered in the gap, with thicker styling.
+  - Blocked drops when the pointer is on a category icon, so the browser can show a forbidden cursor there.
+  - Limited valid drop feedback to true gap zones and kept a single line per gap to avoid double-line artifacts.
+- Files:
+  - `public/app.js`
+  - `public/styles.css`
+
+### 2026-04-06 - Category Drag Outer Slot Range Expanded
+- Symptom:
+  - Dropping before the first row or after the last row could still fail when the pointer moved slightly beyond the original narrow edge capture zone.
+- Root cause:
+  - Outer insertion zones reused a relatively tight boundary compared with normal row-gap movement, so release events near the page edge could fall outside the valid slot.
+- Fix:
+  - Added a larger dedicated outer capture range for the first-row top slot and last-row bottom slot.
+  - Expanded the stored-target fallback area to match the wider outer slots.
+- Files:
+  - `public/app.js`
+
+### 2026-04-06 - Category Side Blocks Vertically Centered
+- Symptom:
+  - Left category labels and right action blocks were visually aligned to the top instead of centered against the full height of the tag grid.
+- Root cause:
+  - `.category-row` used `align-items: start`, so side columns did not center within taller multi-row content blocks.
+- Fix:
+  - Changed category row grid alignment to vertical centering so side blocks track the full row height.
+- Files:
+  - `public/styles.css`
+
+### 2026-04-06 - Category Side Center Offset Compensated For Hover Safe Space
+- Symptom:
+  - On collapsed overflow rows, left category labels and right action blocks still looked slightly too high after vertical centering.
+- Root cause:
+  - The tag area reserved extra top-safe space for hover lift, so centering against the full row box biased the side columns upward relative to the visible tiles.
+- Fix:
+  - Added a row-level hover-safe-space variable for overflow rows.
+  - Shifted left and right side columns down by half of that reserved top space, so their visual center matches the tile block center.
+- Files:
+  - `public/styles.css`
+
+### 2026-04-06 - Category Side Blocks Anchored To First Row
+- Symptom:
+  - Left category labels and right-side action buttons moved vertically when a category expanded to multiple rows.
+- Root cause:
+  - Side columns still participated in full-row alignment, so expanding the middle content changed their vertical position.
+- Fix:
+  - Anchored side columns to the top of the row instead of centering against total expanded height.
+  - Kept the hover-safe-space offset compensation so collapsed rows still look visually centered.
+- Files:
+  - `public/styles.css`
+
+### 2026-04-06 - Category Side Offset Uses Full Hover Safe Space
+- Symptom:
+  - Side blocks still looked slightly too high because they were only shifted by half of the reserved top hover-safe space.
+- Root cause:
+  - Side columns are anchored to the first row, so the correct visual compensation is the full reserved top space, not half.
+- Fix:
+  - Changed left and right side block offset to use the full `--category-hover-safe-top` value.
+- Files:
+  - `public/styles.css`
+
+### 2026-04-06 - Picsum Custom Seed Row Hidden By Default
+- Symptom:
+  - The custom seed input row was always visible in Picsum mode, even when a built-in seed preset was selected.
+- Root cause:
+  - Field visibility only depended on the background provider and did not distinguish preset mode from custom mode.
+- Fix:
+  - Show the preset selector for Picsum by default.
+  - Only reveal the custom seed input row when the current seed does not match any built-in preset, including when the user selects the custom option.
+- Files:
+  - `public/app.js`

@@ -12,7 +12,9 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const publicDir = path.join(__dirname, "public");
 const databasePath = path.join(__dirname, "searchindex.db");
 const BING_HOST = "https://cn.bing.com";
-const BING_ARCHIVE_ENDPOINT = `${BING_HOST}/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=zh-CN`;
+const BING_RECENT_MIN = 1;
+const BING_RECENT_MAX = 8;
+const BING_RECENT_DEFAULT = 8;
 
 const defaultState = {
   settings: {
@@ -25,6 +27,7 @@ const defaultState = {
       seed: "linen-warm",
       customUrl: "",
       overlayOpacity: 100,
+      bingRecentCount: BING_RECENT_DEFAULT,
     },
     historyLimit: HISTORY_LIMIT,
   },
@@ -118,11 +121,7 @@ const defaultLinkLabelById = new Map(
   )
 );
 
-let bingBackgroundCache = {
-  expiresAt: 0,
-  images: [],
-  fetchedAt: "",
-};
+const bingBackgroundCacheByCount = new Map();
 
 const db = new Database(databasePath);
 db.pragma("journal_mode = WAL");
@@ -272,9 +271,10 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/background/bing", async (_req, res) => {
+app.get("/api/background/bing", async (req, res) => {
   try {
-    const payload = await getBingBackgroundPayload();
+    const requestedCount = sanitizeBingRecentCount(req.query?.n, BING_RECENT_DEFAULT);
+    const payload = await getBingBackgroundPayload(requestedCount);
     res.json(payload);
   } catch (error) {
     res.status(502).json({
@@ -748,22 +748,30 @@ function sanitizeSettings(input, fallback) {
           ? sanitizePublicUrl(background.customUrl) || fallback.background.customUrl
           : sanitizePublicUrl(background.customUrl) || "",
       overlayOpacity: sanitizeOpacity(background.overlayOpacity, fallback.background.overlayOpacity),
+      bingRecentCount: sanitizeBingRecentCount(
+        background.bingRecentCount,
+        fallback.background.bingRecentCount
+      ),
     },
     historyLimit: HISTORY_LIMIT,
   };
 }
 
-async function getBingBackgroundPayload() {
+async function getBingBackgroundPayload(recentCount = BING_RECENT_DEFAULT) {
+  const safeRecentCount = sanitizeBingRecentCount(recentCount, BING_RECENT_DEFAULT);
+  const endpoint = `${BING_HOST}/HPImageArchive.aspx?format=js&idx=0&n=${safeRecentCount}&mkt=zh-CN`;
   const now = Date.now();
-  if (bingBackgroundCache.images.length && now < bingBackgroundCache.expiresAt) {
+  const cached = bingBackgroundCacheByCount.get(safeRecentCount);
+  if (cached?.images?.length && now < cached.expiresAt) {
     return {
       provider: "bing_hourly",
-      images: bingBackgroundCache.images,
-      fetchedAt: bingBackgroundCache.fetchedAt,
+      images: cached.images,
+      fetchedAt: cached.fetchedAt,
+      recentCount: safeRecentCount,
     };
   }
 
-  const response = await fetch(BING_ARCHIVE_ENDPOINT, {
+  const response = await fetch(endpoint, {
     headers: {
       "User-Agent": "mx-search/1.0",
     },
@@ -794,25 +802,27 @@ async function getBingBackgroundPayload() {
         .filter(Boolean)
     : [];
 
-  if (!images.length && bingBackgroundCache.images.length) {
+  if (!images.length && cached?.images?.length) {
     return {
       provider: "bing_hourly",
-      images: bingBackgroundCache.images,
-      fetchedAt: bingBackgroundCache.fetchedAt,
+      images: cached.images,
+      fetchedAt: cached.fetchedAt,
+      recentCount: safeRecentCount,
     };
   }
 
   const fetchedAt = new Date().toISOString();
-  bingBackgroundCache = {
+  bingBackgroundCacheByCount.set(safeRecentCount, {
     expiresAt: now + 1000 * 60 * 20,
     images,
     fetchedAt,
-  };
+  });
 
   return {
     provider: "bing_hourly",
     images,
     fetchedAt,
+    recentCount: safeRecentCount,
   };
 }
 
@@ -963,6 +973,14 @@ function sanitizeTagOpacity(value, fallback = 94) {
     return 94;
   }
   return Math.max(35, Math.min(100, Math.round(source)));
+}
+
+function sanitizeBingRecentCount(value, fallback = BING_RECENT_DEFAULT) {
+  const source = Number.isFinite(Number(value)) ? Number(value) : Number(fallback);
+  if (!Number.isFinite(source)) {
+    return BING_RECENT_DEFAULT;
+  }
+  return Math.max(BING_RECENT_MIN, Math.min(BING_RECENT_MAX, Math.round(source)));
 }
 
 function isLikelyCorruptedText(value) {
