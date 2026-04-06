@@ -989,16 +989,13 @@ function renderSeedPresetOptions(currentSeed = "") {
     return;
   }
   const normalizedCurrent = String(currentSeed || "").trim();
-  const options = [
-    '<option value="">自定义（保持当前输入）</option>',
-    ...BACKGROUND_SEED_PRESETS.map(
-      (item) =>
-        `<option value="${escapeAttribute(item.value)}">${escapeHtml(item.value)} · ${escapeHtml(item.label)}</option>`
-    ),
-  ];
+  const options = BACKGROUND_SEED_PRESETS.map(
+    (item) =>
+      `<option value="${escapeAttribute(item.value)}">${escapeHtml(item.value)} · ${escapeHtml(item.label)}</option>`
+  );
   backgroundSeedPresetInput.innerHTML = options.join("");
   const matched = BACKGROUND_SEED_PRESETS.find((item) => item.value === normalizedCurrent);
-  backgroundSeedPresetInput.value = matched ? matched.value : "";
+  backgroundSeedPresetInput.value = matched ? matched.value : BACKGROUND_SEED_PRESETS[0]?.value || "";
   updateSeedPresetHint(matched, normalizedCurrent);
 }
 

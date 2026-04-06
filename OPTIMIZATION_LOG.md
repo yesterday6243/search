@@ -346,3 +346,14 @@
   - Only reveal the custom seed input row when the current seed does not match any built-in preset, including when the user selects the custom option.
 - Files:
   - `public/app.js`
+
+### 2026-04-06 - Removed Picsum Custom Placeholder Option
+- Symptom:
+  - The preset selector still showed a custom placeholder option, which made the control look redundant after hiding the custom input row by default.
+- Root cause:
+  - Preset rendering still injected an explicit custom option at the top of the list.
+- Fix:
+  - Removed the custom placeholder option from the preset selector.
+  - Kept the custom seed input row behavior for non-preset seed values.
+- Files:
+  - `public/app.js`
