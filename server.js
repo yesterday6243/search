@@ -1,4 +1,4 @@
-const crypto = require("crypto");
+﻿const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
 const Database = require("better-sqlite3");
@@ -22,101 +22,7 @@ const ICON_CACHE_MAX_ENTRIES = 300;
 const ICON_CACHE_FETCH_LIMIT = 120;
 const ICON_CACHE_ENTRY_MAX_BYTES = 512 * 1024;
 
-const defaultState = {
-  settings: {
-    siteTitle: "mx search",
-    subtitle: "搜索网页",
-    searchBarHeight: 68,
-    tagOpacity: 94,
-    background: {
-      provider: "bing_hourly",
-      seed: "linen-warm",
-      customUrl: "",
-      overlayOpacity: 100,
-      bingRecentCount: BING_RECENT_DEFAULT,
-    },
-    historyLimit: HISTORY_LIMIT,
-  },
-  engines: [
-    {
-      id: "google",
-      name: "Google",
-      urlTemplate: "https://www.google.com/search?q=%s",
-    },
-    {
-      id: "bing",
-      name: "Bing",
-      urlTemplate: "https://www.bing.com/search?q=%s",
-    },
-    {
-      id: "baidu",
-      name: "Baidu",
-      urlTemplate: "https://www.baidu.com/s?wd=%s",
-    },
-    {
-      id: "duckduckgo",
-      name: "DuckDuckGo",
-      urlTemplate: "https://duckduckgo.com/?q=%s",
-    },
-    {
-      id: "github",
-      name: "GitHub",
-      urlTemplate: "https://github.com/search?q=%s",
-    },
-  ],
-  selectedEngineId: "google",
-  categories: [
-    {
-      id: "cat_ai",
-      name: "AI",
-      links: [
-        { id: "openai", label: "OpenAI", url: "https://openai.com/" },
-        { id: "huggingface", label: "Hugging Face", url: "https://huggingface.co/" },
-        { id: "kimi", label: "Kimi", url: "https://kimi.moonshot.cn/" },
-        { id: "claude", label: "Claude", url: "https://claude.ai/" },
-        { id: "perplexity", label: "Perplexity", url: "https://www.perplexity.ai/" },
-        { id: "replicate", label: "Replicate", url: "https://replicate.com/" },
-        { id: "coze", label: "Coze", url: "https://www.coze.com/" },
-        { id: "waytoagi", label: "WayToAGI", url: "https://www.waytoagi.com/" },
-        { id: "poe", label: "Poe", url: "https://poe.com/" },
-        { id: "lmarena", label: "LMArena", url: "https://lmarena.ai/" },
-      ],
-    },
-    {
-      id: "cat_dev",
-      name: "开发",
-      links: [
-        { id: "github_home", label: "GitHub", url: "https://github.com/" },
-        { id: "npm", label: "npm", url: "https://www.npmjs.com/" },
-        { id: "mdn", label: "MDN", url: "https://developer.mozilla.org/" },
-        { id: "vercel", label: "Vercel", url: "https://vercel.com/" },
-        { id: "cloudflare", label: "Cloudflare", url: "https://dash.cloudflare.com/" },
-        { id: "stackoverflow", label: "StackOverflow", url: "https://stackoverflow.com/" },
-        { id: "vite", label: "Vite", url: "https://vite.dev/" },
-        { id: "nodejs", label: "Node.js", url: "https://nodejs.org/" },
-        { id: "docker", label: "Docker", url: "https://www.docker.com/" },
-        { id: "figma_dev", label: "Figma", url: "https://www.figma.com/" },
-      ],
-    },
-    {
-      id: "cat_media",
-      name: "内容",
-      links: [
-        { id: "bilibili", label: "Bilibili", url: "https://www.bilibili.com/" },
-        { id: "youtube", label: "YouTube", url: "https://www.youtube.com/" },
-        { id: "juejin", label: "掘金", url: "https://juejin.cn/" },
-        { id: "zhihu", label: "知乎", url: "https://www.zhihu.com/" },
-        { id: "sspai", label: "少数派", url: "https://sspai.com/" },
-        { id: "wechat", label: "微信读书", url: "https://weread.qq.com/" },
-        { id: "x", label: "X", url: "https://x.com/" },
-        { id: "reddit", label: "Reddit", url: "https://www.reddit.com/" },
-        { id: "news", label: "Google News", url: "https://news.google.com/" },
-        { id: "feishu", label: "飞书", url: "https://www.feishu.cn/" },
-      ],
-    },
-  ],
-  history: [],
-};
+const defaultState = require('./default-state.json');
 
 const defaultCategoryNameById = new Map(
   defaultState.categories.map((category) => [category.id, category.name])
@@ -160,7 +66,7 @@ app.post("/api/auth/register", (req, res) => {
   const password = typeof req.body?.password === "string" ? req.body.password : "";
 
   if (!username) {
-    res.status(400).json({ message: "用户名格式无效（3-32位，不能含空格）" });
+    res.status(400).json({ message: "用户名格式无效（3-32位，不能包含空格）" });
     return;
   }
   if (password.length < PASSWORD_MIN_LENGTH) {
@@ -377,7 +283,7 @@ app.post("/api/icon-cache/default/promote", requireAuth, async (req, res) => {
     res.json({ ok: true, iconCache });
   } catch (error) {
     console.error("default icon cache promote failed", error);
-    res.status(502).json({ message: "图标缓存同步失败" });
+    res.status(502).json({ message: "鍥炬爣缂撳瓨鍚屾澶辫触" });
   }
 });
 
@@ -516,7 +422,7 @@ function requireAuth(req, res, next) {
   cleanupExpiredSessions();
   const authUser = getAuthUserFromRequest(req);
   if (!authUser) {
-    res.status(401).json({ message: "请先登录", requiresAuth: true });
+    res.status(401).json({ message: "璇峰厛鐧诲綍", requiresAuth: true });
     return;
   }
   req.authUser = authUser;
@@ -1155,7 +1061,7 @@ function sanitizeEngines(input, fallback) {
 
   const sanitized = input
     .map((engine, index) => {
-      const name = sanitizeText(engine?.name, `搜索引擎 ${index + 1}`).slice(0, 24);
+      const name = sanitizeText(engine?.name, `鎼滅储寮曟搸 ${index + 1}`).slice(0, 24);
       const urlTemplate = sanitizeTemplateUrl(engine?.urlTemplate);
       if (!name || !urlTemplate) {
         return null;
@@ -1190,7 +1096,7 @@ function sanitizeCategories(input, fallbackCategories = defaultState.categories)
       const fallbackCategoryName =
         fallbackCategory?.name ||
         defaultCategoryNameById.get(categoryId) ||
-        `分类 ${categoryIndex + 1}`;
+        `鍒嗙被 ${categoryIndex + 1}`;
       let name = sanitizeText(category?.name, fallbackCategoryName).slice(0, 18);
       if (isLikelyCorruptedText(name) && fallbackCategoryName) {
         name = fallbackCategoryName.slice(0, 18);
@@ -1209,7 +1115,7 @@ function sanitizeCategories(input, fallbackCategories = defaultState.categories)
               const fallbackLabel =
                 fallbackLink?.label ||
                 defaultLinkLabelById.get(linkId) ||
-                `标签 ${linkIndex + 1}`;
+                `鏍囩 ${linkIndex + 1}`;
               let label = sanitizeText(link?.label, fallbackLabel).slice(0, 18);
               if (isLikelyCorruptedText(label) && fallbackLabel) {
                 label = fallbackLabel.slice(0, 18);
@@ -1497,7 +1403,7 @@ function formatBackupName(value) {
   const day = String(date.getDate()).padStart(2, "0");
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
-  return `备份 ${year}/${month}/${day} ${hour}:${minute}`;
+  return `澶囦唤 ${year}/${month}/${day} ${hour}:${minute}`;
 }
 
 function sanitizeSearchBarHeight(value, fallback = 68) {
@@ -1591,3 +1497,4 @@ function safelyParse(value) {
 function createId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
+

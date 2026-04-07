@@ -1,0 +1,146 @@
+{
+  "settings": {
+    "siteTitle": "mx search",
+    "subtitle": "搜索网页",
+    "searchBarHeight": 55,
+    "tagOpacity": 100,
+    "background": {
+      "provider": "bing_hourly",
+      "seed": "mist-forest",
+      "customUrl": "",
+      "overlayOpacity": 0,
+      "bingRecentCount": 8
+    },
+    "historyLimit": 100
+  },
+  "engines": [
+    {
+      "id": "google",
+      "name": "Google",
+      "urlTemplate": "https://www.google.com/search?q=%s"
+    },
+    {
+      "id": "bing",
+      "name": "Bing",
+      "urlTemplate": "https://www.bing.com/search?q=%s"
+    },
+    {
+      "id": "baidu",
+      "name": "Baidu",
+      "urlTemplate": "https://www.baidu.com/s?wd=%s"
+    },
+    {
+      "id": "duckduckgo",
+      "name": "DuckDuckGo",
+      "urlTemplate": "https://duckduckgo.com/?q=%s"
+    },
+    {
+      "id": "engine_sogou",
+      "name": "搜狗",
+      "urlTemplate": "https://www.sogou.com/web?query=%s"
+    },
+    {
+      "id": "engine_douyin",
+      "name": "抖音",
+      "urlTemplate": "https://www.douyin.com/search/%s"
+    },
+    {
+      "id": "engine_so360",
+      "name": "360搜索",
+      "urlTemplate": "https://www.so.com/s?q=%s"
+    },
+    {
+      "id": "engine_wikipedia",
+      "name": "维基百科",
+      "urlTemplate": "https://zh.wikipedia.org/w/index.php?search=%s"
+    }
+  ],
+  "selectedEngineId": "google",
+  "categories": [
+    {
+      "id": "cat_ai",
+      "name": "AI",
+      "links": [
+        { "id": "gemini", "label": "Grmini", "url": "https://gemini.google.com/" },
+        { "id": "grok", "label": "grok", "url": "https://grok.com/" },
+        { "id": "claude", "label": "Claude", "url": "https://claude.ai/" },
+        { "id": "gpt", "label": "GPT", "url": "https://openai.com/" },
+        { "id": "kimi", "label": "Kimi", "url": "https://kimi.moonshot.cn/" },
+        { "id": "chatglm", "label": "智谱清言", "url": "https://chatglm.cn/main/alltoolsdetail?lang=zh" },
+        { "id": "qianwen", "label": "千问", "url": "https://www.qianwen.com/" },
+        { "id": "deepseek", "label": "deepseek", "url": "https://www.deepseek.com/" },
+        { "id": "doubao", "label": "豆包", "url": "https://www.doubao.com/" },
+        { "id": "yiyan", "label": "文心一言", "url": "https://yiyan.baidu.com/" },
+        { "id": "yuanbao", "label": "元宝", "url": "https://yuanbao.tencent.com/" },
+        { "id": "minimax", "label": "MiniMax", "url": "https://minimaxi.com/" },
+        { "id": "stepfun", "label": "阶跃星辰", "url": "https://www.stepfun.com/" },
+        { "id": "poe", "label": "Poe", "url": "https://poe.com/" },
+        { "id": "coze", "label": "Coze", "url": "https://www.coze.com/" },
+        { "id": "perplexity", "label": "Perplexity", "url": "https://www.perplexity.ai/" },
+        { "id": "replicate", "label": "Replicate", "url": "https://replicate.com/" },
+        { "id": "mimo", "label": "MiMo", "url": "https://aistudio.xiaomimimo.com/#/c" },
+        { "id": "ima", "label": "IMA", "url": "https://ima.qq.com/" }
+      ]
+    },
+    {
+      "id": "cat_content",
+      "name": "内容",
+      "links": [
+        { "id": "weibo", "label": "微博", "url": "https://weibo.com/" },
+        { "id": "xiaohongshu", "label": "小红书", "url": "https://www.xiaohongshu.com/" },
+        { "id": "zhihu", "label": "知乎", "url": "https://www.zhihu.com/" },
+        { "id": "feishu", "label": "飞书", "url": "https://www.feishu.cn/" },
+        { "id": "juejin", "label": "掘金", "url": "https://juejin.cn/" },
+        { "id": "sspai", "label": "少数派", "url": "https://sspai.com/" },
+        { "id": "reddit", "label": "Reddit", "url": "https://www.reddit.com/" },
+        { "id": "nivod", "label": "泥视频", "url": "https://www.nivod.cc/" },
+        { "id": "youtube", "label": "YouTube", "url": "https://www.youtube.com/" },
+        { "id": "weread", "label": "微信读书", "url": "https://weread.qq.com/" },
+        { "id": "matrix-detect", "label": "朱雀查重", "url": "https://matrix.tencent.com/ai-detect/" },
+        { "id": "ustc-speed", "label": "中科大测速", "url": "https://test.ustc.edu.cn/" },
+        { "id": "riskbird", "label": "企业查询", "url": "https://riskbird.com/" },
+        { "id": "ping0", "label": "IP检测", "url": "https://ping0.cc/" },
+        { "id": "smartedu", "label": "智慧教育平台", "url": "https://basic.smartedu.cn/" },
+        { "id": "x", "label": "X", "url": "https://x.com/" },
+        { "id": "bilibili", "label": "Bilibili", "url": "https://www.bilibili.com/" },
+        { "id": "vqq", "label": "腾讯视频", "url": "https://v.qq.com/" },
+        { "id": "douyin-content", "label": "抖音", "url": "https://www.douyin.com/" },
+        { "id": "google-news", "label": "Google News", "url": "https://news.google.com/" }
+      ]
+    },
+    {
+      "id": "cat_dev",
+      "name": "开发",
+      "links": [
+        { "id": "github", "label": "GitHub", "url": "https://github.com/" },
+        { "id": "figma", "label": "Figma", "url": "https://www.figma.com/" },
+        { "id": "cloudflare", "label": "Cloudflare", "url": "https://dash.cloudflare.com/" },
+        { "id": "vercel", "label": "Vercel", "url": "https://vercel.com/" },
+        { "id": "mdn", "label": "MDN", "url": "https://developer.mozilla.org/" },
+        { "id": "npm", "label": "npm", "url": "https://www.npmjs.com/" },
+        { "id": "stackoverflow", "label": "StackOverflow", "url": "https://stackoverflow.com/" },
+        { "id": "vite", "label": "Vite", "url": "https://vite.dev/" },
+        { "id": "docker", "label": "Docker", "url": "https://www.docker.com/" },
+        { "id": "nodejs", "label": "Node.js", "url": "https://nodejs.org/" },
+        { "id": "waytoagi", "label": "WayToAGI", "url": "https://www.waytoagi.com/" },
+        { "id": "tencent-cloud", "label": "腾讯云", "url": "https://cloud.tencent.com/" },
+        { "id": "aliyun", "label": "阿里云", "url": "https://www.aliyun.com/" }
+      ]
+    },
+    {
+      "id": "cat_rank",
+      "name": "AI排行",
+      "links": [
+        { "id": "lmarena", "label": "LMArena", "url": "https://lmarena.ai/" },
+        { "id": "artificialanalysis", "label": "Artificial Analysi", "url": "https://artificialanalysis.ai/" },
+        { "id": "livebench", "label": "LiveBench", "url": "https://livebench.ai/" },
+        { "id": "llm-stats", "label": "LLM-Stats", "url": "https://llm-stats.com/" },
+        { "id": "openrouter", "label": "openrouter", "url": "https://openrouter.ai/rankings" },
+        { "id": "opencompass", "label": "司南", "url": "https://opencompass.org.cn/home" },
+        { "id": "superclue", "label": "SuperCLUE", "url": "https://www.superclueai.com/generalpage" },
+        { "id": "epoch", "label": "Epoch", "url": "https://epoch.ai/benchmarks/" }
+      ]
+    }
+  ],
+  "history": []
+}

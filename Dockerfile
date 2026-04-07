@@ -14,6 +14,7 @@ COPY public ./public
 COPY docs ./docs
 COPY scripts ./scripts
 COPY server.js ./
+COPY default-state.json ./
 COPY README.md ./
 COPY OPTIMIZATION_LOG.md ./
 
