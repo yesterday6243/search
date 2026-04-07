@@ -297,6 +297,44 @@ app.put("/api/state", requireAuth, (req, res) => {
   res.json(nextRecord);
 });
 
+app.get("/api/backups", requireAuth, (req, res) => {
+  res.json({
+    backups: listUserBackups(req.authUser.id),
+  });
+});
+
+app.get("/api/backups/:backupId", requireAuth, (req, res) => {
+  const backup = getUserBackupRecord(req.authUser.id, req.params.backupId);
+  if (!backup) {
+    res.status(404).json({ message: "备份不存在" });
+    return;
+  }
+  res.json(backup);
+});
+
+app.post("/api/backups", requireAuth, (req, res) => {
+  const inputState = req.body?.state;
+  if (!inputState || typeof inputState !== "object" || Array.isArray(inputState)) {
+    res.status(400).json({ message: "state is required" });
+    return;
+  }
+
+  const backup = createUserBackup(req.authUser.id, inputState);
+  res.status(201).json(backup);
+});
+
+app.delete("/api/backups/:backupId", requireAuth, (req, res) => {
+  const deleted = deleteUserBackup(req.authUser.id, req.params.backupId);
+  if (!deleted) {
+    res.status(404).json({ message: "备份不存在" });
+    return;
+  }
+  res.json({
+    ok: true,
+    backups: listUserBackups(req.authUser.id),
+  });
+});
+
 app.post("/api/icon-cache/default/query", requireAuth, (req, res) => {
   const hosts = sanitizeIconHostList(req.body?.hosts);
   res.json({
@@ -403,6 +441,21 @@ function ensureDatabaseSchema() {
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS user_backups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      data TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_user_backups_user_created
+    ON user_backups(user_id, created_at DESC)
   `).run();
 
   db.prepare(`
@@ -681,6 +734,100 @@ function getStateRecord(userId) {
     state,
     updatedAt: row?.updated_at || new Date().toISOString(),
   };
+}
+
+function listUserBackups(userId) {
+  return db
+    .prepare(
+      `
+        SELECT id, created_at
+        FROM user_backups
+        WHERE user_id = ?
+        ORDER BY created_at DESC, id DESC
+        LIMIT 3
+      `
+    )
+    .all(userId)
+    .map((row) => ({
+      id: String(row.id),
+      createdAt: row.created_at,
+    }));
+}
+
+function getUserBackupRecord(userId, backupId) {
+  const numericId = Number(backupId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return null;
+  }
+
+  const row = db
+    .prepare(
+      `
+        SELECT id, data, created_at
+        FROM user_backups
+        WHERE user_id = ? AND id = ?
+      `
+    )
+    .get(userId, numericId);
+
+  if (!row?.data) {
+    return null;
+  }
+
+  return {
+    id: String(row.id),
+    createdAt: row.created_at,
+    state: sanitizeState(safelyParse(row.data), defaultState),
+  };
+}
+
+function createUserBackup(userId, inputState) {
+  const state = sanitizeState(inputState, defaultState);
+  const createdAt = new Date().toISOString();
+  const insert = db.prepare(
+    `
+      INSERT INTO user_backups (user_id, data, created_at)
+      VALUES (?, ?, ?)
+    `
+  ).run(userId, JSON.stringify(state), createdAt);
+
+  db.prepare(
+    `
+      DELETE FROM user_backups
+      WHERE user_id = ?
+        AND id NOT IN (
+          SELECT id
+          FROM user_backups
+          WHERE user_id = ?
+          ORDER BY created_at DESC, id DESC
+          LIMIT 3
+        )
+    `
+  ).run(userId, userId);
+
+  return {
+    id: String(insert.lastInsertRowid),
+    createdAt,
+    backups: listUserBackups(userId),
+  };
+}
+
+function deleteUserBackup(userId, backupId) {
+  const numericId = Number(backupId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return false;
+  }
+
+  const result = db
+    .prepare(
+      `
+        DELETE FROM user_backups
+        WHERE user_id = ? AND id = ?
+      `
+    )
+    .run(userId, numericId);
+
+  return result.changes > 0;
 }
 
 function readDefaultIconCache(hosts = []) {

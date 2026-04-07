@@ -1,9 +1,50 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shen Search</title>
+    <script>
+      try {
+        const rawSnapshot = window.localStorage.getItem("mx_background_url_v1");
+        let cachedBackgroundUrl = "";
+        if (rawSnapshot) {
+          try {
+            const parsed = JSON.parse(rawSnapshot);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              cachedBackgroundUrl = String(parsed.url || "");
+            } else {
+              cachedBackgroundUrl = String(rawSnapshot);
+            }
+          } catch {
+            cachedBackgroundUrl = String(rawSnapshot);
+          }
+        }
+        if (cachedBackgroundUrl) {
+          const safeUrl = cachedBackgroundUrl.replace(/"/g, "%22");
+          document.documentElement.style.setProperty("--page-bg", `url("${safeUrl}")`);
+        }
+
+        const rawUiPrefs = window.localStorage.getItem("mx_ui_prefs_v1");
+        if (rawUiPrefs) {
+          const parsedUiPrefs = JSON.parse(rawUiPrefs);
+          const safeSearchHeight = Number(parsedUiPrefs.searchBarHeight);
+          if (Number.isFinite(safeSearchHeight)) {
+            document.documentElement.style.setProperty("--search-height", `${Math.max(52, Math.min(96, Math.round(safeSearchHeight)))}px`);
+          }
+          const safeTagOpacity = Number(parsedUiPrefs.tagOpacity);
+          if (Number.isFinite(safeTagOpacity)) {
+            const normalizedTagOpacity = Math.max(35, Math.min(100, Math.round(safeTagOpacity))) / 100;
+            document.documentElement.style.setProperty("--tag-surface-opacity", normalizedTagOpacity.toFixed(2));
+            document.documentElement.style.setProperty("--tag-surface-opacity-soft", Math.min(1, normalizedTagOpacity * 0.97).toFixed(2));
+          }
+          const safeOverlayOpacity = Number(parsedUiPrefs.overlayOpacity);
+          if (Number.isFinite(safeOverlayOpacity)) {
+            document.documentElement.style.setProperty("--bg-overlay-opacity", (Math.max(0, Math.min(100, Math.round(safeOverlayOpacity))) / 100).toFixed(2));
+          }
+        }
+      } catch {}
+    </script>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -13,10 +54,10 @@
     <header class="topbar">
       <div class="brand-mini" id="siteTitleDisplay" title="点击更换背景">mx search</div>
       <div class="topbar-actions">
-        <div class="sync-pill" id="syncStatus">
+        <button class="sync-pill" id="syncStatus" type="button" aria-label="打开云端备份与同步" title="点击管理云端备份与同步">
           <span class="sync-dot" aria-hidden="true"></span>
-          <span>云端同步就绪</span>
-        </div>
+          <span>云端备份就绪</span>
+        </button>
         <button class="icon-button settings-toggle" id="openSettingsButton" type="button" aria-label="打开设置" title="设置">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.4 7.4 0 0 0-1.62-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.22-1.13.53-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.72 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.07.63-.07.94s.03.63.07.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.41 1.04.72 1.62.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.22 1.13-.53 1.62-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z" />
@@ -99,8 +140,10 @@
         <div class="settings-scroll" id="settingsScroll">
           <section class="settings-section" data-trail-section="基础信息">
             <div class="settings-title-row">
-              <h3>基础信息</h3>
-              <span>会自动同步到所有设备</span>
+              <div class="settings-title-main">
+                <span class="settings-anchor-badge">01</span>
+                <h3>基础信息</h3>
+              </div>
             </div>
             <label class="field">
               <span>浏览器标题</span>
@@ -138,7 +181,10 @@
 
           <section class="settings-section" data-trail-section="背景图">
             <div class="settings-title-row">
-              <h3>背景图</h3>
+              <div class="settings-title-main">
+                <span class="settings-anchor-badge">02</span>
+                <h3>背景图</h3>
+              </div>
               <span>来自公共图床</span>
             </div>
             <label class="field">
@@ -191,7 +237,10 @@
 
           <section class="settings-section" data-trail-section="搜索引擎">
             <div class="settings-title-row">
-              <h3>搜索引擎</h3>
+              <div class="settings-title-main">
+                <span class="settings-anchor-badge">03</span>
+                <h3>搜索引擎</h3>
+              </div>
             </div>
             <div class="editor-stack" id="engineEditor"></div>
             <div class="section-bottom-actions">
@@ -201,7 +250,10 @@
 
           <section class="settings-section" data-trail-section="标签分类" id="categorySection">
             <div class="settings-title-row">
-              <h3>标签分类</h3>
+              <div class="settings-title-main">
+                <span class="settings-anchor-badge">04</span>
+                <h3>标签分类</h3>
+              </div>
             </div>
             <div class="editor-stack" id="categoryEditor"></div>
             <div class="section-bottom-actions">
@@ -211,7 +263,10 @@
 
           <section class="settings-section" data-trail-section="搜索历史">
             <div class="settings-title-row">
-              <h3>搜索历史</h3>
+              <div class="settings-title-main">
+                <span class="settings-anchor-badge">05</span>
+                <h3>搜索历史</h3>
+              </div>
               <span id="historyCountLabel">最近保留 100 条</span>
             </div>
             <div class="history-settings">
@@ -229,6 +284,12 @@
         </div>
       </form>
       <div class="settings-quick-scroll hidden" id="settingsQuickScroll" aria-hidden="true">
+        <div class="settings-quick-guides" aria-hidden="true">
+          <span class="settings-quick-guide"></span>
+          <span class="settings-quick-guide"></span>
+          <span class="settings-quick-guide"></span>
+          <span class="settings-quick-guide"></span>
+        </div>
         <div class="settings-quick-track"></div>
         <button class="settings-quick-thumb" id="settingsQuickThumb" type="button" aria-label="快速滚动设置"></button>
       </div>
@@ -258,7 +319,7 @@
           <span>密码</span>
           <input id="loginPasswordInput" type="password" minlength="8" maxlength="128" required />
         </label>
-        <button class="primary-button auth-submit" type="submit">登录并同步</button>
+        <button class="primary-button auth-submit" type="submit">登录</button>
       </form>
 
       <form class="auth-form hidden" id="registerForm" autocomplete="off">
@@ -278,7 +339,40 @@
       </form>
     </aside>
 
+    <aside class="auth-modal sync-modal hidden" id="syncModal" aria-hidden="true">
+      <div class="auth-header">
+        <div>
+          <p class="section-kicker">BACKUP</p>
+          <h2>云端备份与同步</h2>
+        </div>
+        <button class="ghost-button" id="closeSyncModalButton" type="button">关闭</button>
+      </div>
+      <p class="auth-meta" id="syncModalMeta">手动把本地数据备份到云端，或从云端备份恢复并覆盖当前本地数据。</p>
+      <p class="auth-message hidden" id="syncModalMessage"></p>
+      <div class="sync-modal-actions">
+        <button class="primary-button" id="backupNowButton" type="button">备份当前本地数据</button>
+        <button class="ghost-button" id="refreshBackupsButton" type="button">刷新记录</button>
+      </div>
+      <div class="sync-backup-list" id="syncBackupList"></div>
+    </aside>
+
+    <aside class="auth-modal confirm-modal hidden" id="confirmModal" aria-hidden="true">
+      <div class="auth-header">
+        <div>
+          <p class="section-kicker">CONFIRM</p>
+          <h2 id="confirmModalTitle">请确认操作</h2>
+        </div>
+        <button class="ghost-button" id="closeConfirmModalButton" type="button">关闭</button>
+      </div>
+      <p class="auth-meta" id="confirmModalMessage">确认后会继续执行当前操作。</p>
+      <div class="sync-modal-actions confirm-modal-actions">
+        <button class="ghost-button" id="confirmModalCancelButton" type="button">取消</button>
+        <button class="primary-button" id="confirmModalConfirmButton" type="button">确定</button>
+      </div>
+    </aside>
+
     <div class="drawer-scrim hidden" id="drawerScrim"></div>
+    <div class="notice-toast hidden" id="noticeToast" aria-live="polite"></div>
 
     <script src="/app.js"></script>
   </body>

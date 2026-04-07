@@ -367,3 +367,13 @@
 - 2026-04-07: fixed probabilistic icon reloads by rejecting HTML/error pages masquerading as image/x-icon in both server cache and localStorage cache, then reseeded previously poisoned hosts (douyin.com, chatglm.cn, qianwen.com, coze.com).
 
 - 2026-04-07: rounded the active search-engine icon inside the search button without changing the outer button geometry.
+
+- 2026-04-07: optimized applyState so background refresh and rotation only rerun when the background config changes, and added remote icon-source cooldowns to stop repeated retry flicker after transient favicon failures.
+
+- 2026-04-07: fixed refresh-time background mismatch by removing the hard-coded CSS default remote image, bootstrapping the last persisted background URL in head before CSS paint, and persisting every resolved runtime background URL to localStorage.
+
+- 2026-04-07: changed background persistence from raw URL-only storage to a URL+background-key snapshot so manual background switches survive refresh when the background config is unchanged, while scheduled rotation still resumes normally.
+
+- 2026-04-07: added local authenticated state snapshots plus head-time UI variable bootstrap (search height, tag opacity, overlay opacity, last background) so refreshes render from cached settings/layout first and then reconcile with the server without search-bar size flicker.
+
+- 2026-04-07: removed automatic polling sync, turned the top-right sync pill into a manual sync button, and updated save/status copy to reflect explicit cloud pulls instead of background auto-sync.

@@ -10,6 +10,19 @@ const activeEngineIcon = document.getElementById("activeEngineIcon");
 const siteTitleDisplay = document.getElementById("siteTitleDisplay");
 const tagBoard = document.getElementById("tagBoard");
 const syncStatus = document.getElementById("syncStatus");
+const syncModal = document.getElementById("syncModal");
+const closeSyncModalButton = document.getElementById("closeSyncModalButton");
+const syncModalMeta = document.getElementById("syncModalMeta");
+const syncModalMessage = document.getElementById("syncModalMessage");
+const backupNowButton = document.getElementById("backupNowButton");
+const refreshBackupsButton = document.getElementById("refreshBackupsButton");
+const syncBackupList = document.getElementById("syncBackupList");
+const confirmModal = document.getElementById("confirmModal");
+const confirmModalTitle = document.getElementById("confirmModalTitle");
+const confirmModalMessage = document.getElementById("confirmModalMessage");
+const closeConfirmModalButton = document.getElementById("closeConfirmModalButton");
+const confirmModalCancelButton = document.getElementById("confirmModalCancelButton");
+const confirmModalConfirmButton = document.getElementById("confirmModalConfirmButton");
 const settingsDrawer = document.getElementById("settingsDrawer");
 const settingsTrail = document.getElementById("settingsTrail");
 const settingsScroll = document.getElementById("settingsScroll");
@@ -62,13 +75,20 @@ const registerUsernameInput = document.getElementById("registerUsernameInput");
 const registerPasswordInput = document.getElementById("registerPasswordInput");
 const registerPasswordConfirmInput = document.getElementById("registerPasswordConfirmInput");
 const registerSubmitButton = document.getElementById("registerSubmitButton");
+const noticeToast = document.getElementById("noticeToast");
 const BRAND_NAME = "mx search";
 const MAX_TAGS_PER_ROW = 10;
 const LOCAL_HISTORY_STORAGE_KEY = "mx_search_local_history_v1";
+const STATE_SNAPSHOT_STORAGE_KEY = "mx_state_snapshot_v1";
+const UI_PREFS_STORAGE_KEY = "mx_ui_prefs_v1";
+const BACKGROUND_SNAPSHOT_STORAGE_KEY = "mx_background_url_v1";
+const SYNC_META_STORAGE_KEY = "mx_sync_meta_v1";
 const BACKGROUND_SWITCH_INTERVAL_MS = 60 * 60 * 1000;
 const ICON_CACHE_STORAGE_KEY = "mx_icon_source_cache_v1";
 const ICON_CACHE_MAX_ENTRIES = 300;
 const ICON_CACHE_SERVER_PROMOTE_DEBOUNCE_MS = 1200;
+const ICON_SOURCE_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
+const NOTICE_HIDE_DELAY_MS = 2200;
 const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
 const TAG_FADE_START_DISTANCE = 34;
@@ -138,14 +158,17 @@ const categoryDragState = {
 
 let appState = null;
 let settingsDraft = null;
-let syncTimer = null;
+let syncModalBusy = false;
+let syncModalBackups = [];
 let settingsTrailFrame = 0;
 let settingsQuickScrollFrame = 0;
 let tagViewportFadeFrame = 0;
 let tagLabelFitFrame = 0;
 let backgroundIntervalTimer = 0;
 let backgroundDelayTimer = 0;
-let currentBackgroundUrl = "";
+const persistedBackgroundSnapshot = loadPersistedBackgroundSnapshot();
+let currentBackgroundUrl = persistedBackgroundSnapshot.url;
+let currentBackgroundRefreshKey = persistedBackgroundSnapshot.key;
 let currentBingImageIndex = -1;
 let authMode = AUTH_MODE_LOGIN;
 let pendingOpenSettingsAfterAuth = false;
@@ -170,19 +193,33 @@ const engineRenderKeyCache = new Map();
 const bingBackgroundCacheByCount = new Map();
 let iconCachePromoteTimer = 0;
 const pendingIconPromoteHosts = new Set();
+const iconSourceFailureCooldown = new Map();
+let noticeTimer = 0;
+let confirmResolver = null;
+let confirmScopeElement = null;
 
 boot();
 
 async function boot() {
   ensureCategoryDropIndicator();
   bindEvents();
-  await refreshAuthStatus();
-  if (authState.loggedIn) {
-    await loadState();
+  const cachedStatePayload = loadPersistedStateSnapshot();
+  if (cachedStatePayload) {
+    applyState(cachedStatePayload, { persistLocalCache: false });
   } else {
     applyGuestState();
   }
-  syncTimer = window.setInterval(pollState, 20000);
+  await refreshAuthStatus();
+  if (authState.loggedIn) {
+    if (cachedStatePayload?.username && cachedStatePayload.username !== authState.username) {
+      clearPersistedStateSnapshot();
+      applyGuestState();
+    }
+  } else {
+    clearPersistedStateSnapshot();
+    applyGuestState();
+  }
+  renderSyncStatus();
 }
 
 function bindEvents() {
@@ -201,6 +238,43 @@ function bindEvents() {
     updateSearchClearButton();
     searchInput.focus();
     renderHistoryList("");
+  });
+  syncStatus?.addEventListener("click", () => {
+    void handleManualSyncClick();
+  });
+  closeSyncModalButton?.addEventListener("click", closeSyncModal);
+  backupNowButton?.addEventListener("click", () => {
+    void handleBackupNow();
+  });
+  refreshBackupsButton?.addEventListener("click", () => {
+    void refreshBackupList();
+  });
+  syncBackupList?.addEventListener("click", (event) => {
+    const actionButton = event.target.closest("[data-backup-action]");
+    if (!actionButton) {
+      return;
+    }
+    const backupId = actionButton.dataset.backupId || "";
+    const action = actionButton.dataset.backupAction || "";
+    if (!backupId || !action) {
+      return;
+    }
+    if (action === "restore") {
+      void handleRestoreBackup(backupId);
+      return;
+    }
+    if (action === "delete") {
+      void handleDeleteBackup(backupId);
+    }
+  });
+  closeConfirmModalButton?.addEventListener("click", () => {
+    resolveConfirmDialog(false);
+  });
+  confirmModalCancelButton?.addEventListener("click", () => {
+    resolveConfirmDialog(false);
+  });
+  confirmModalConfirmButton?.addEventListener("click", () => {
+    resolveConfirmDialog(true);
   });
 
   engineToggleButton.addEventListener("click", () => {
@@ -237,6 +311,14 @@ function bindEvents() {
     void handleRegisterSubmit(event);
   });
   drawerScrim.addEventListener("click", () => {
+    if (!confirmModal.classList.contains("hidden")) {
+      resolveConfirmDialog(false);
+      return;
+    }
+    if (!syncModal.classList.contains("hidden")) {
+      closeSyncModal();
+      return;
+    }
     if (!authModal.classList.contains("hidden")) {
       pendingOpenSettingsAfterAuth = false;
       closeAuthModal();
@@ -331,11 +413,7 @@ function createGuestPayload() {
 
 function applyGuestState() {
   const payload = createGuestPayload();
-  applyState(payload);
-  const message = authState.userCount
-    ? "未登录，点击右上角设置可登录后同步"
-    : "还没有账号，点击右上角设置先注册";
-  setStatus(message, "default");
+  applyState(payload, { persistLocalCache: false });
 }
 
 function updateAuthMeta() {
@@ -380,7 +458,10 @@ function switchAuthMode(mode) {
 
 function syncOverlayVisibility() {
   const hasOverlay =
-    !settingsDrawer.classList.contains("hidden") || !authModal.classList.contains("hidden");
+    !settingsDrawer.classList.contains("hidden") ||
+    !authModal.classList.contains("hidden") ||
+    !syncModal.classList.contains("hidden") ||
+    !confirmModal.classList.contains("hidden");
   drawerScrim.classList.toggle("hidden", !hasOverlay);
   document.body.classList.toggle("drawer-open", hasOverlay);
 }
@@ -457,9 +538,9 @@ async function handleLoginSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
-    await loadState(true);
     closeAuthModal();
-    setStatus(`欢迎回来，${authState.username}`, "success");
+    renderSyncStatus();
+    showNotice(`欢迎回来，${authState.username}`, "success");
     if (pendingOpenSettingsAfterAuth) {
       pendingOpenSettingsAfterAuth = false;
       openSettings();
@@ -502,9 +583,9 @@ async function handleRegisterSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
-    await loadState(true);
     closeAuthModal();
-    setStatus(`注册成功，欢迎 ${authState.username}`, "success");
+    renderSyncStatus();
+    showNotice(`注册成功，欢迎 ${authState.username}`, "success");
     if (pendingOpenSettingsAfterAuth) {
       pendingOpenSettingsAfterAuth = false;
       openSettings();
@@ -520,7 +601,13 @@ async function handleRegisterSubmit(event) {
 }
 
 async function handleLogout() {
-  if (!window.confirm("确认退出登录吗？")) {
+  const confirmed = await openConfirmDialog({
+    title: "退出登录",
+    message: "退出后会保留当前浏览器里的本地数据，但需要重新登录才能访问云端备份。",
+    confirmText: "退出登录",
+    scopeElement: settingsDrawer,
+  });
+  if (!confirmed) {
     return;
   }
 
@@ -532,56 +619,315 @@ async function handleLogout() {
 
   await refreshAuthStatus();
   closeSettings();
+  closeSyncModal();
+  clearPersistedStateSnapshot();
   applyGuestState();
-  setStatus("已退出登录", "success");
+  renderSyncStatus();
+  showNotice("已退出登录", "success");
 }
 
-async function loadState(silent = false) {
-  try {
-    const payload = await fetchJson("/api/state");
-    await hydrateServerIconCacheForState(payload.state);
-    applyState(payload);
-    queuePromoteRelevantIconCacheEntries(payload.state);
-    if (!silent) {
-      setStatus("云端数据已同步", "success");
-    }
-  } catch (error) {
-    console.error(error);
-    if (error?.status === 401) {
-      await refreshAuthStatus();
-      applyGuestState();
-      if (!silent) {
-        setStatus("登录后可同步个人数据", "error");
-      }
-      return;
-    }
-    setStatus("同步失败，请检查服务是否在线", "error");
+async function handleManualSyncClick() {
+  if (syncModalBusy) {
+    return;
+  }
+  if (!authState.loggedIn) {
+    openAuthModal(authState.userCount === 0 ? AUTH_MODE_REGISTER : AUTH_MODE_LOGIN);
+    return;
+  }
+  openSyncModal();
+}
+
+function openSyncModal() {
+  if (!syncModal) {
+    return;
+  }
+  syncModal.classList.remove("hidden");
+  syncModal.setAttribute("aria-hidden", "false");
+  setSyncModalMessage("");
+  renderSyncModalMeta();
+  renderBackupList();
+  syncOverlayVisibility();
+  void refreshBackupList();
+}
+
+function closeSyncModal() {
+  if (!syncModal) {
+    return;
+  }
+  syncModal.classList.add("hidden");
+  syncModal.setAttribute("aria-hidden", "true");
+  setSyncModalMessage("");
+  syncOverlayVisibility();
+}
+
+function openConfirmDialog({
+  title = "请确认操作",
+  message = "确认后会继续执行当前操作。",
+  confirmText = "确定",
+  cancelText = "取消",
+  scopeElement = null,
+} = {}) {
+  if (!confirmModal || !confirmModalTitle || !confirmModalMessage) {
+    return Promise.resolve(false);
+  }
+  if (confirmResolver) {
+    confirmResolver(false);
+    confirmResolver = null;
+  }
+
+  confirmModalTitle.textContent = title;
+  confirmModalMessage.textContent = message;
+  if (confirmModalConfirmButton) {
+    confirmModalConfirmButton.textContent = confirmText;
+  }
+  if (confirmModalCancelButton) {
+    confirmModalCancelButton.textContent = cancelText;
+  }
+  if (confirmScopeElement instanceof Element) {
+    confirmScopeElement.classList.remove("has-local-confirm");
+  }
+  confirmScopeElement = scopeElement instanceof Element ? scopeElement : null;
+  confirmScopeElement?.classList.add("has-local-confirm");
+
+  confirmModal.classList.remove("hidden");
+  confirmModal.setAttribute("aria-hidden", "false");
+  syncOverlayVisibility();
+  confirmModalConfirmButton?.focus();
+
+  return new Promise((resolve) => {
+    confirmResolver = resolve;
+  });
+}
+
+function resolveConfirmDialog(result) {
+  if (!confirmModal) {
+    return;
+  }
+  confirmModal.classList.add("hidden");
+  confirmModal.setAttribute("aria-hidden", "true");
+  if (confirmScopeElement instanceof Element) {
+    confirmScopeElement.classList.remove("has-local-confirm");
+  }
+  confirmScopeElement = null;
+  syncOverlayVisibility();
+  const resolver = confirmResolver;
+  confirmResolver = null;
+  if (resolver) {
+    resolver(Boolean(result));
   }
 }
 
-async function pollState() {
-  if (!authState.loggedIn || !appState || !settingsDrawer.classList.contains("hidden")) {
+function renderSyncModalMeta() {
+  if (!syncModalMeta) {
+    return;
+  }
+  if (!authState.loggedIn) {
+    syncModalMeta.textContent = "登录后可管理云端备份与同步。";
+    return;
+  }
+  syncModalMeta.textContent = "备份会把当前本地数据写入云端。同步会从选中的云端备份恢复，并覆盖当前本地数据。";
+}
+
+function setSyncModalMessage(message = "", tone = "error") {
+  if (!syncModalMessage) {
+    return;
+  }
+  if (!message) {
+    syncModalMessage.textContent = "";
+    syncModalMessage.classList.add("hidden");
+    syncModalMessage.dataset.tone = "";
+    return;
+  }
+  syncModalMessage.textContent = message;
+  syncModalMessage.classList.remove("hidden");
+  syncModalMessage.dataset.tone = tone;
+}
+
+function setSyncModalBusyState(busy) {
+  syncModalBusy = Boolean(busy);
+  syncStatus?.classList.toggle("is-busy", syncModalBusy);
+  syncStatus?.setAttribute("aria-busy", syncModalBusy ? "true" : "false");
+  if (backupNowButton) {
+    backupNowButton.disabled = syncModalBusy;
+  }
+  if (refreshBackupsButton) {
+    refreshBackupsButton.disabled = syncModalBusy;
+  }
+}
+
+async function handleSyncAuthError(error) {
+  if (error?.status !== 401) {
+    return false;
+  }
+  await refreshAuthStatus();
+  closeSyncModal();
+  renderSyncStatus();
+  openAuthModal(authState.userCount === 0 ? AUTH_MODE_REGISTER : AUTH_MODE_LOGIN);
+  return true;
+}
+
+async function refreshBackupList() {
+  if (!authState.loggedIn) {
+    return;
+  }
+  setSyncModalBusyState(true);
+  setSyncModalMessage("");
+  try {
+    const payload = await fetchJson("/api/backups");
+    syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : [];
+    renderBackupList();
+  } catch (error) {
+    console.error(error);
+    if (await handleSyncAuthError(error)) {
+      return;
+    }
+    setSyncModalMessage(error.message || "云端备份列表加载失败");
+  } finally {
+    setSyncModalBusyState(false);
+  }
+}
+
+function renderBackupList() {
+  if (!syncBackupList) {
+    return;
+  }
+  if (!syncModalBackups.length) {
+    syncBackupList.innerHTML = '<div class="sync-backup-empty">当前还没有云端备份。先点击上方“备份当前本地数据”创建一条记录。</div>';
     return;
   }
 
+  syncBackupList.innerHTML = syncModalBackups
+    .map((backup, index) => {
+      const backupId = escapeAttribute(backup.id || "");
+      const createdAt = backup.createdAt ? formatPreciseTime(backup.createdAt) : "未知时间";
+      return `
+        <div class="sync-backup-item">
+          <div>
+            <p class="sync-backup-title">备份 ${syncModalBackups.length - index}</p>
+            <p class="sync-backup-meta">创建时间 · ${escapeHtml(createdAt)}</p>
+          </div>
+          <div class="sync-backup-actions">
+            <button class="primary-button" type="button" data-backup-action="restore" data-backup-id="${backupId}">同步到本地</button>
+            <button class="ghost-button danger" type="button" data-backup-action="delete" data-backup-id="${backupId}">删除</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function handleBackupNow() {
+  if (!authState.loggedIn || !appState || syncModalBusy) {
+    return;
+  }
+  setSyncModalBusyState(true);
+  setSyncModalMessage("");
   try {
-    const payload = await fetchJson("/api/state");
-    if (payload.updatedAt !== appState.updatedAt) {
-      await hydrateServerIconCacheForState(payload.state);
-      applyState(payload);
-      queuePromoteRelevantIconCacheEntries(payload.state);
-      setStatus("检测到其他设备更新，已自动同步", "success");
-    }
+    const payload = await fetchJson("/api/backups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        state: {
+          settings: appState.settings,
+          engines: appState.engines,
+          selectedEngineId: appState.selectedEngineId,
+          categories: appState.categories,
+        },
+      }),
+    });
+    syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : syncModalBackups;
+    markSyncAction("backup");
+    renderBackupList();
+    setSyncModalMessage("当前本地数据已备份到云端。", "success");
+    showNotice("当前本地数据已备份到云端", "success");
   } catch (error) {
     console.error(error);
-    if (error?.status === 401) {
-      await refreshAuthStatus();
-      applyGuestState();
+    if (await handleSyncAuthError(error)) {
+      return;
     }
+    setSyncModalMessage(error.message || "备份失败，请稍后重试");
+  } finally {
+    setSyncModalBusyState(false);
   }
 }
 
-function applyState(payload) {
+async function handleRestoreBackup(backupId) {
+  if (!authState.loggedIn || !backupId || syncModalBusy) {
+    return;
+  }
+  const confirmed = await openConfirmDialog({
+    title: "同步到本地",
+    message: "同步会用所选云端备份覆盖当前本地数据。当前本地未备份改动会被替换，是否继续？",
+    confirmText: "同步到本地",
+    scopeElement: syncModal,
+  });
+  if (!confirmed) {
+    return;
+  }
+  setSyncModalBusyState(true);
+  setSyncModalMessage("");
+  try {
+    const payload = await fetchJson(`/api/backups/${encodeURIComponent(backupId)}`);
+    await hydrateServerIconCacheForState(payload.state);
+    applyState(
+      {
+        state: payload.state,
+        updatedAt: new Date().toISOString(),
+      },
+      { persistLocalCache: true }
+    );
+    queuePromoteRelevantIconCacheEntries(payload.state);
+    markSyncAction("sync");
+    setSyncModalMessage("云端备份已同步到当前设备。", "success");
+    showNotice("云端备份已同步到当前设备", "success");
+  } catch (error) {
+    console.error(error);
+    if (await handleSyncAuthError(error)) {
+      return;
+    }
+    setSyncModalMessage(error.message || "同步失败，请稍后重试");
+  } finally {
+    setSyncModalBusyState(false);
+  }
+}
+
+async function handleDeleteBackup(backupId) {
+  if (!authState.loggedIn || !backupId || syncModalBusy) {
+    return;
+  }
+  const confirmed = await openConfirmDialog({
+    title: "删除云端备份",
+    message: "删除后这条云端备份将无法恢复。是否继续？",
+    confirmText: "删除",
+    scopeElement: syncModal,
+  });
+  if (!confirmed) {
+    return;
+  }
+  setSyncModalBusyState(true);
+  setSyncModalMessage("");
+  try {
+    const payload = await fetchJson(`/api/backups/${encodeURIComponent(backupId)}`, {
+      method: "DELETE",
+    });
+    syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : [];
+    renderBackupList();
+    setSyncModalMessage("云端备份已删除。", "success");
+    showNotice("云端备份已删除", "success");
+  } catch (error) {
+    console.error(error);
+    if (await handleSyncAuthError(error)) {
+      return;
+    }
+    setSyncModalMessage(error.message || "删除失败，请稍后重试");
+  } finally {
+    setSyncModalBusyState(false);
+  }
+}
+
+function applyState(payload, options = {}) {
+  const previousBackgroundRefreshKey = currentBackgroundRefreshKey;
+  const persistLocalCache = options.persistLocalCache !== false;
   const nextState = {
     ...payload.state,
     updatedAt: payload.updatedAt,
@@ -613,13 +959,29 @@ function applyState(payload) {
   renderActiveEngineButton();
   applyBackgroundOverlayOpacity(appState.settings.background.overlayOpacity);
   renderBackgroundFieldVisibility(appState.settings.background);
-  void refreshBackgroundNow({ manual: false, force: true });
+  const nextBackgroundRefreshKey = getBackgroundRefreshKey(appState.settings.background);
+  const shouldRefreshBackground =
+    !currentBackgroundUrl || previousBackgroundRefreshKey !== nextBackgroundRefreshKey;
+  currentBackgroundRefreshKey = nextBackgroundRefreshKey;
+  if (shouldRefreshBackground) {
+    void refreshBackgroundNow({ manual: false, force: previousBackgroundRefreshKey !== nextBackgroundRefreshKey });
+  }
   scheduleBackgroundRotation();
   renderTagBoard();
   renderHistoryList(searchInput.value);
   renderEngineMenu();
   primeEngineButtonIcons();
   queueTagViewportFadeUpdate();
+
+  if (persistLocalCache && authState.loggedIn) {
+    persistStateSnapshot({
+      state: appState,
+      updatedAt: appState.updatedAt,
+      username: authState.username,
+    });
+    persistUiPrefsSnapshot(appState.settings);
+  }
+  renderSyncStatus();
 }
 
 function renderActiveEngineButton() {
@@ -942,7 +1304,7 @@ async function handleSearch(event) {
 
   const activeEngine = getActiveEngine();
   if (!activeEngine) {
-    setStatus("没有可用的搜索引擎，请先在设置里添加一个", "error");
+    showNotice("没有可用的搜索引擎，请先在设置里添加一个", "error");
     return;
   }
 
@@ -1369,23 +1731,28 @@ async function saveSettings(event) {
   }
 
   try {
-    const payload = await updateState({
+    await updateState({
       settings: settingsDraft.settings,
       engines: settingsDraft.engines,
       selectedEngineId: settingsDraft.selectedEngineId,
       categories: settingsDraft.categories,
     });
-    applyState(payload);
     closeSettings();
-    setStatus("设置已保存，并同步到所有设备", "success");
+    showNotice("设置已保存到本地", "success");
   } catch (error) {
     console.error(error);
-    setStatus("保存失败，请检查输入格式", "error");
+    showNotice("保存失败，请检查输入格式", "error");
   }
 }
 
 async function clearHistory() {
-  if (!window.confirm("确定要清空最近 100 条搜索历史吗？")) {
+  const confirmed = await openConfirmDialog({
+    title: "清空本地搜索历史",
+    message: "这会删除当前浏览器里最近 100 条搜索历史，且不会影响云端备份。是否继续？",
+    confirmText: "清空历史",
+    scopeElement: settingsDrawer,
+  });
+  if (!confirmed) {
     return;
   }
 
@@ -1397,26 +1764,26 @@ async function clearHistory() {
   persistLocalHistory(appState.history);
   updateHistoryCountLabel();
   renderHistoryList(searchInput.value);
-  setStatus("本地搜索历史已清空", "success");
+  showNotice("本地搜索历史已清空", "success");
 }
 
 async function updateState(patch) {
-  try {
-    const payload = await fetchJson("/api/state", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    applyState(payload);
-    return payload;
-  } catch (error) {
-    if (error?.status === 401) {
-      await refreshAuthStatus();
-      applyGuestState();
-      openAuthModal(authState.userCount === 0 ? AUTH_MODE_REGISTER : AUTH_MODE_LOGIN);
-    }
-    throw error;
+  const baseState = appState || structuredClone(GUEST_STATE);
+  const mergedState = mergeLocalState(baseState, patch);
+  const nextState = sanitizeCachedStateSnapshot(mergedState);
+  if (!nextState.engines.some((engine) => engine.id === nextState.selectedEngineId)) {
+    nextState.selectedEngineId = nextState.engines[0]?.id || "";
   }
+  nextState.history = Array.isArray(baseState.history) ? structuredClone(baseState.history) : [];
+  const payload = {
+    state: nextState,
+    updatedAt: new Date().toISOString(),
+  };
+  applyState(payload);
+  if (authState.loggedIn) {
+    markSyncDirty();
+  }
+  return payload;
 }
 
 function handleTagDragStart(event) {
@@ -1554,11 +1921,11 @@ function handleTagDrop(event) {
 
   updateState({ categories: moved })
     .then(() => {
-      setStatus("标签位置已同步", "success");
+      showNotice("标签位置已保存到本地", "success");
     })
     .catch((error) => {
       console.error(error);
-      setStatus("标签位置保存失败，请重试", "error");
+      showNotice("标签位置保存失败，请重试", "error");
     });
 }
 
@@ -1678,11 +2045,11 @@ function handleCategoryDrop(event) {
 
   updateState({ categories: moved })
     .then(() => {
-      setStatus("分类顺序已同步", "success");
+      showNotice("分类顺序已保存到本地", "success");
     })
     .catch((error) => {
       console.error(error);
-      setStatus("分类顺序保存失败，请重试", "error");
+      showNotice("分类顺序保存失败，请重试", "error");
     });
 }
 
@@ -2061,6 +2428,40 @@ function updateSettingsQuickScroll() {
 
   settingsQuickThumb.style.height = `${thumbHeight}px`;
   settingsQuickThumb.style.top = `${thumbTop}px`;
+  updateSettingsQuickGuides({
+    trackInset,
+    maxThumbTravel,
+    maxScroll,
+  });
+}
+
+function updateSettingsQuickGuides({ trackInset, maxThumbTravel, maxScroll }) {
+  if (!settingsQuickScroll || !settingsScroll) {
+    return;
+  }
+
+  const guideNodes = Array.from(settingsQuickScroll.querySelectorAll(".settings-quick-guide"));
+  if (!guideNodes.length) {
+    return;
+  }
+
+  const sections = Array.from(settingsScroll.querySelectorAll("[data-trail-section]"));
+  const effectiveMaxScroll = Math.max(0, maxScroll);
+
+  guideNodes.forEach((guideNode, index) => {
+    const nextSection = sections[index + 1];
+    if (!(guideNode instanceof HTMLElement) || !(nextSection instanceof HTMLElement) || effectiveMaxScroll <= 0) {
+      guideNode.style.display = "none";
+      return;
+    }
+
+    const sectionOffset = Math.max(0, nextSection.offsetTop - 6);
+    const ratio = Math.max(0, Math.min(1, sectionOffset / effectiveMaxScroll));
+    const guideTop = trackInset + Math.round(maxThumbTravel * ratio);
+
+    guideNode.style.display = "";
+    guideNode.style.top = `${guideTop}px`;
+  });
 }
 
 function scrollSettingsByQuickPointer(clientY, centerThumb = false) {
@@ -2220,7 +2621,7 @@ async function refreshBackgroundNow({ manual = false, force = false } = {}) {
     if (customUrl) {
       setBackgroundUrl(customUrl);
       if (manual) {
-        setStatus("已切换到自定义背景", "success");
+        showNotice("已切换到自定义背景", "success");
       }
       return;
     }
@@ -2238,7 +2639,7 @@ async function refreshBackgroundNow({ manual = false, force = false } = {}) {
   const picsumUrl = `https://picsum.photos/seed/${encodeURIComponent(`${seed}-${token}`)}/1920/1080`;
   setBackgroundUrl(picsumUrl);
   if (manual) {
-    setStatus("已切换背景", "success");
+    showNotice("已切换背景", "success");
   }
 }
 
@@ -2264,7 +2665,7 @@ async function applyBingBackground({ manual = false, force = false } = {}) {
   setBackgroundUrl(picked.url);
   if (manual) {
     const title = picked.title ? `：${picked.title}` : "";
-    setStatus(`已切换 Bing 背景${title}`, "success");
+    showNotice(`已切换 Bing 背景${title}`, "success");
   }
   return true;
 }
@@ -2340,12 +2741,232 @@ function scheduleBackgroundRotation() {
   }, Math.max(msUntilNextHour, 1000));
 }
 
-function setBackgroundUrl(url) {
-  if (!url || url === currentBackgroundUrl) {
+function setBackgroundUrl(url, persistenceKey = currentBackgroundRefreshKey) {
+  if (!url) {
     return;
   }
-  currentBackgroundUrl = url;
-  document.documentElement.style.setProperty("--page-bg", `url("${url}")`);
+
+  let normalizedUrl = "";
+  try {
+    normalizedUrl = new URL(String(url).trim(), window.location.origin).toString();
+  } catch {
+    return;
+  }
+
+  const normalizedKey = typeof persistenceKey === "string" ? persistenceKey : "";
+  const shouldUpdateStyle = normalizedUrl !== currentBackgroundUrl;
+  currentBackgroundUrl = normalizedUrl;
+  if (normalizedKey) {
+    currentBackgroundRefreshKey = normalizedKey;
+  }
+  persistBackgroundSnapshot(currentBackgroundUrl, currentBackgroundRefreshKey);
+  if (!shouldUpdateStyle) {
+    return;
+  }
+  document.documentElement.style.setProperty("--page-bg", `url("${currentBackgroundUrl}")`);
+}
+
+function loadPersistedBackgroundSnapshot() {
+  try {
+    const raw = window.localStorage.getItem(BACKGROUND_SNAPSHOT_STORAGE_KEY);
+    if (!raw) {
+      return { url: "", key: "" };
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("legacy snapshot");
+    }
+
+    const url = new URL(String(parsed.url || "").trim(), window.location.origin).toString();
+    const key = typeof parsed.key === "string" ? parsed.key : "";
+    return { url, key };
+  } catch {
+    try {
+      const legacy = window.localStorage.getItem(BACKGROUND_SNAPSHOT_STORAGE_KEY);
+      const trimmed = typeof legacy === "string" ? legacy.trim() : "";
+      if (!trimmed) {
+        return { url: "", key: "" };
+      }
+      return {
+        url: new URL(trimmed, window.location.origin).toString(),
+        key: "",
+      };
+    } catch {
+      return { url: "", key: "" };
+    }
+  }
+}
+
+function persistBackgroundSnapshot(url, key = currentBackgroundRefreshKey) {
+  try {
+    const normalizedUrl = new URL(String(url || "").trim(), window.location.origin).toString();
+    const normalizedKey = typeof key === "string" ? key : "";
+    window.localStorage.setItem(
+      BACKGROUND_SNAPSHOT_STORAGE_KEY,
+      JSON.stringify({
+        url: normalizedUrl,
+        key: normalizedKey,
+      })
+    );
+  } catch {}
+}
+
+function loadPersistedStateSnapshot() {
+  try {
+    const raw = window.localStorage.getItem(STATE_SNAPSHOT_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+
+    if (!parsed.state || typeof parsed.state !== "object" || Array.isArray(parsed.state)) {
+      return null;
+    }
+
+    return {
+      state: sanitizeCachedStateSnapshot(parsed.state),
+      updatedAt:
+        typeof parsed.updatedAt === "string" && parsed.updatedAt.trim()
+          ? parsed.updatedAt
+          : new Date().toISOString(),
+      username:
+        typeof parsed.username === "string" && parsed.username.trim()
+          ? parsed.username.trim()
+          : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function persistStateSnapshot(payload) {
+  try {
+    const state = payload?.state && typeof payload.state === "object" ? payload.state : null;
+    if (!state) {
+      return;
+    }
+    window.localStorage.setItem(
+      STATE_SNAPSHOT_STORAGE_KEY,
+      JSON.stringify({
+        state,
+        updatedAt:
+          typeof payload?.updatedAt === "string" && payload.updatedAt.trim()
+            ? payload.updatedAt
+            : new Date().toISOString(),
+        username: typeof payload?.username === "string" ? payload.username : "",
+      })
+    );
+  } catch {}
+}
+
+function clearPersistedStateSnapshot() {
+  try {
+    window.localStorage.removeItem(STATE_SNAPSHOT_STORAGE_KEY);
+  } catch {}
+}
+
+function sanitizeCachedStateSnapshot(state) {
+  const source = state && typeof state === "object" ? state : {};
+  const settingsSource = source.settings && typeof source.settings === "object" ? source.settings : {};
+  const backgroundSource =
+    settingsSource.background && typeof settingsSource.background === "object"
+      ? settingsSource.background
+      : {};
+
+  return {
+    settings: {
+      siteTitle:
+        typeof settingsSource.siteTitle === "string" && settingsSource.siteTitle.trim()
+          ? settingsSource.siteTitle.trim()
+          : BRAND_NAME,
+      subtitle:
+        typeof settingsSource.subtitle === "string" && settingsSource.subtitle.trim()
+          ? settingsSource.subtitle.trim()
+          : "搜索网页",
+      searchBarHeight: normalizeSearchBarHeight(settingsSource.searchBarHeight),
+      tagOpacity: normalizeTagOpacity(settingsSource.tagOpacity),
+      background: {
+        provider:
+          backgroundSource.provider === "custom_url" ||
+          backgroundSource.provider === "picsum_seed" ||
+          backgroundSource.provider === "bing_hourly"
+            ? backgroundSource.provider
+            : "bing_hourly",
+        seed:
+          typeof backgroundSource.seed === "string" && backgroundSource.seed.trim()
+            ? backgroundSource.seed.trim()
+            : "linen-warm",
+        customUrl:
+          typeof backgroundSource.customUrl === "string" ? backgroundSource.customUrl.trim() : "",
+        overlayOpacity: normalizeOverlayOpacity(backgroundSource.overlayOpacity),
+        bingRecentCount: normalizeBingRecentCount(backgroundSource.bingRecentCount),
+      },
+      historyLimit: Number(settingsSource.historyLimit) || 100,
+    },
+    engines: Array.isArray(source.engines) ? source.engines : [],
+    selectedEngineId: typeof source.selectedEngineId === "string" ? source.selectedEngineId : "",
+    categories: Array.isArray(source.categories) ? source.categories : [],
+    history: Array.isArray(source.history) ? source.history : [],
+  };
+}
+
+function mergeLocalState(current, patch) {
+  const currentState = current && typeof current === "object" ? current : structuredClone(GUEST_STATE);
+  const nextPatch = patch && typeof patch === "object" ? patch : {};
+  return {
+    ...currentState,
+    ...nextPatch,
+    settings: {
+      ...currentState.settings,
+      ...(nextPatch.settings || {}),
+      background: {
+        ...currentState.settings.background,
+        ...(nextPatch.settings?.background || {}),
+      },
+    },
+    engines: Array.isArray(nextPatch.engines) ? nextPatch.engines : currentState.engines,
+    categories: Array.isArray(nextPatch.categories) ? nextPatch.categories : currentState.categories,
+    history: Array.isArray(nextPatch.history) ? nextPatch.history : currentState.history,
+    selectedEngineId:
+      typeof nextPatch.selectedEngineId === "string"
+        ? nextPatch.selectedEngineId
+        : currentState.selectedEngineId,
+  };
+}
+
+function persistUiPrefsSnapshot(settings) {
+  try {
+    const source = settings && typeof settings === "object" ? settings : {};
+    const backgroundSource =
+      source.background && typeof source.background === "object" ? source.background : {};
+    window.localStorage.setItem(
+      UI_PREFS_STORAGE_KEY,
+      JSON.stringify({
+        searchBarHeight: normalizeSearchBarHeight(source.searchBarHeight),
+        tagOpacity: normalizeTagOpacity(source.tagOpacity),
+        overlayOpacity: normalizeOverlayOpacity(backgroundSource.overlayOpacity),
+      })
+    );
+  } catch {}
+}
+
+function getBackgroundRefreshKey(background) {
+  const source = background && typeof background === "object" ? background : {};
+  const provider = source.provider || "bing_hourly";
+  const seed = String(source.seed || "linen-warm").trim() || "linen-warm";
+  const customUrl = String(source.customUrl || "").trim();
+  const bingRecentCount = normalizeBingRecentCount(source.bingRecentCount);
+  return JSON.stringify({
+    provider,
+    seed,
+    customUrl,
+    bingRecentCount,
+  });
 }
 
 function getCurrentHourKey() {
@@ -2506,9 +3127,11 @@ function buildIconSources(url) {
   const s2DomainUrl = `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(url.href)}`;
   const iconHorse = `https://icon.horse/icon/${encodeURIComponent(host)}`;
   const unavatar = `https://unavatar.io/${encodeURIComponent(host)}`;
-  const sources = [pathNative, pathNativePng, s2DomainUrl, native, nativePng, duck, s2, iconHorse, unavatar]
+  const allSources = [pathNative, pathNativePng, s2DomainUrl, native, nativePng, duck, s2, iconHorse, unavatar]
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index);
+  const cooledSources = allSources.filter((item) => !isIconSourceCoolingDown(item));
+  const sources = cooledSources.length ? cooledSources : allSources;
   return { host, sources };
 }
 
@@ -2588,6 +3211,7 @@ window.__mxIconLoaded = function handleIconLoaded(imageNode) {
     return;
   }
 
+  clearIconSourceFailure(source);
   imageNode.dataset.iconChain = "";
 
   if (iconSourceCache[host] === source) {
@@ -2607,13 +3231,15 @@ window.__mxIconFallback = function handleIconFallback(imageNode) {
   }
 
   imageNode.classList.remove("is-ready");
+  markIconSourceFailure(imageNode.currentSrc || imageNode.src || imageNode.getAttribute("src"));
 
   const chain = (imageNode.dataset.iconChain || "")
     .split("|")
     .map((item) => item.trim())
     .filter(Boolean);
 
-  if (!chain.length) {
+  const nextSource = takeNextAvailableIconSource(chain);
+  if (!nextSource) {
     imageNode.onerror = null;
     imageNode.onload = null;
     imageNode.dataset.iconHost = "";
@@ -2623,9 +3249,10 @@ window.__mxIconFallback = function handleIconFallback(imageNode) {
     return;
   }
 
-  const [next, ...rest] = chain;
-  imageNode.dataset.iconChain = rest.join("|");
-  imageNode.src = next;
+  imageNode.dataset.iconChain = chain
+    .filter((item) => normalizeIconSource(item) !== normalizeIconSource(nextSource))
+    .join("|");
+  imageNode.src = nextSource;
 };
 
 function parseUrlWithFallback(value) {
@@ -2678,6 +3305,56 @@ function syncIconNodesByHost(host, source, sourceNode = null) {
     node.classList.remove("is-ready");
     node.src = normalizedSource;
   });
+}
+
+function isIconSourceCoolingDown(source) {
+  const normalizedSource = normalizeIconSource(source);
+  if (!normalizedSource || normalizedSource.startsWith("data:")) {
+    return false;
+  }
+
+  const expiresAt = iconSourceFailureCooldown.get(normalizedSource) || 0;
+  if (!expiresAt) {
+    return false;
+  }
+  if (Date.now() >= expiresAt) {
+    iconSourceFailureCooldown.delete(normalizedSource);
+    return false;
+  }
+  return true;
+}
+
+function markIconSourceFailure(source) {
+  const normalizedSource = normalizeIconSource(source);
+  if (!normalizedSource || normalizedSource.startsWith("data:")) {
+    return;
+  }
+  iconSourceFailureCooldown.set(
+    normalizedSource,
+    Date.now() + ICON_SOURCE_FAILURE_COOLDOWN_MS
+  );
+}
+
+function clearIconSourceFailure(source) {
+  const normalizedSource = normalizeIconSource(source);
+  if (!normalizedSource) {
+    return;
+  }
+  iconSourceFailureCooldown.delete(normalizedSource);
+}
+
+function takeNextAvailableIconSource(chain) {
+  for (const candidate of chain) {
+    const normalizedCandidate = normalizeIconSource(candidate);
+    if (!normalizedCandidate) {
+      continue;
+    }
+    if (isIconSourceCoolingDown(normalizedCandidate)) {
+      continue;
+    }
+    return normalizedCandidate;
+  }
+  return "";
 }
 
 function loadIconSourceCache() {
@@ -3016,15 +3693,147 @@ function trimExpandedCategoryState() {
   }
 }
 
-function setStatus(message, tone = "default") {
-  syncStatus.innerHTML = `<span class="sync-dot" aria-hidden="true"></span><span>${escapeHtml(message)}${appState?.updatedAt ? ` · ${escapeHtml(formatTime(appState.updatedAt))}` : ""}</span>`;
-  syncStatus.classList.remove("status-success", "status-error");
+function loadSyncMetaStore() {
+  try {
+    const raw = window.localStorage.getItem(SYNC_META_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistSyncMetaStore(store) {
+  try {
+    window.localStorage.setItem(SYNC_META_STORAGE_KEY, JSON.stringify(store));
+  } catch {}
+}
+
+function getDefaultSyncMeta(username = "") {
+  return {
+    username,
+    dirty: false,
+    lastAction: "",
+    lastActionAt: "",
+  };
+}
+
+function getCurrentSyncMeta() {
+  if (!authState.loggedIn || !authState.username) {
+    return getDefaultSyncMeta();
+  }
+  const store = loadSyncMetaStore();
+  const entry = store[authState.username];
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    return getDefaultSyncMeta(authState.username);
+  }
+  return {
+    username: authState.username,
+    dirty: Boolean(entry.dirty),
+    lastAction: entry.lastAction === "backup" || entry.lastAction === "sync" ? entry.lastAction : "",
+    lastActionAt:
+      typeof entry.lastActionAt === "string" && entry.lastActionAt.trim()
+        ? entry.lastActionAt.trim()
+        : "",
+  };
+}
+
+function saveCurrentSyncMeta(meta) {
+  if (!authState.loggedIn || !authState.username) {
+    return;
+  }
+  const nextMeta = {
+    username: authState.username,
+    dirty: Boolean(meta?.dirty),
+    lastAction: meta?.lastAction === "backup" || meta?.lastAction === "sync" ? meta.lastAction : "",
+    lastActionAt:
+      typeof meta?.lastActionAt === "string" && meta.lastActionAt.trim()
+        ? meta.lastActionAt.trim()
+        : "",
+  };
+  const store = loadSyncMetaStore();
+  store[authState.username] = nextMeta;
+  persistSyncMetaStore(store);
+}
+
+function markSyncDirty() {
+  if (!authState.loggedIn) {
+    return;
+  }
+  const meta = getCurrentSyncMeta();
+  saveCurrentSyncMeta({
+    ...meta,
+    dirty: true,
+  });
+  renderSyncStatus();
+}
+
+function markSyncAction(action) {
+  if (!authState.loggedIn) {
+    return;
+  }
+  saveCurrentSyncMeta({
+    username: authState.username,
+    dirty: false,
+    lastAction: action,
+    lastActionAt: new Date().toISOString(),
+  });
+  renderSyncStatus();
+}
+
+function renderSyncStatus() {
+  if (!syncStatus) {
+    return;
+  }
+
+  let message = "云端备份就绪";
+  let tone = "success";
+
+  if (!authState.loggedIn) {
+    message = authState.userCount ? "登录后可手动备份/同步" : "注册后可手动备份/同步";
+    tone = "default";
+  } else {
+    const meta = getCurrentSyncMeta();
+    if (meta.dirty) {
+      message = "未备份改动";
+      tone = "warning";
+    } else if (meta.lastAction === "backup" && meta.lastActionAt) {
+      message = `已备份数据 · ${formatTime(meta.lastActionAt)}`;
+      tone = "success";
+    } else if (meta.lastAction === "sync" && meta.lastActionAt) {
+      message = `已同步数据 · ${formatTime(meta.lastActionAt)}`;
+      tone = "success";
+    }
+  }
+
+  syncStatus.innerHTML = `<span class="sync-dot" aria-hidden="true"></span><span>${escapeHtml(message)}</span>`;
+  syncStatus.title = authState.loggedIn ? "点击管理云端备份与同步" : "登录后可管理云端备份与同步";
+  syncStatus.classList.remove("status-success", "status-error", "status-warning");
   if (tone === "success") {
     syncStatus.classList.add("status-success");
-  }
-  if (tone === "error") {
+  } else if (tone === "error") {
     syncStatus.classList.add("status-error");
+  } else if (tone === "warning") {
+    syncStatus.classList.add("status-warning");
   }
+}
+
+function showNotice(message, tone = "default") {
+  if (!noticeToast || !message) {
+    return;
+  }
+  if (noticeTimer) {
+    window.clearTimeout(noticeTimer);
+    noticeTimer = 0;
+  }
+  noticeToast.textContent = message;
+  noticeToast.dataset.tone = tone;
+  noticeToast.classList.remove("hidden");
+  noticeTimer = window.setTimeout(() => {
+    noticeToast.classList.add("hidden");
+    noticeToast.dataset.tone = "";
+    noticeTimer = 0;
+  }, NOTICE_HIDE_DELAY_MS);
 }
 
 function formatTime(value) {
@@ -3034,6 +3843,18 @@ function formatTime(value) {
     minute: "2-digit",
     month: "2-digit",
     day: "2-digit",
+  }).format(date);
+}
+
+function formatPreciseTime(value) {
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
   }).format(date);
 }
 
