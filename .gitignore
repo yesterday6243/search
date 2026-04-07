@@ -4,3 +4,4 @@ searchindex.db-shm
 searchindex.db-wal
 .env
 .codex-*.png
+docs/DEPLOY_CENTOS.md
