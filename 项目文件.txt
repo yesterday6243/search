@@ -1,0 +1,74 @@
+按你这个目录截图，主要分 5 类。
+
+**代码和文档**
+- [public](C:\Users\ShenPc-2\Desktop\AI\searchindex\public)
+  - 前端页面文件
+- [scripts](C:\Users\ShenPc-2\Desktop\AI\searchindex\scripts)
+  - 部署脚本
+- [docs](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs)
+  - 开发说明、API 文档
+- [server.js](C:\Users\ShenPc-2\Desktop\AI\searchindex\server.js)
+  - 后端主程序
+- [README.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\README.md)
+  - 项目说明
+- [OPTIMIZATION_LOG.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\OPTIMIZATION_LOG.md)
+  - 这轮改动记录
+
+**依赖和构建**
+- [package.json](C:\Users\ShenPc-2\Desktop\AI\searchindex\package.json)
+  - 项目依赖和脚本
+- [package-lock.json](C:\Users\ShenPc-2\Desktop\AI\searchindex\package-lock.json)
+  - 依赖锁定文件
+- [node_modules](C:\Users\ShenPc-2\Desktop\AI\searchindex\node_modules)
+  - 安装下来的依赖目录，不该上传 GitHub
+
+**Git 和忽略规则**
+- [.git](C:\Users\ShenPc-2\Desktop\AI\searchindex\.git)
+  - Git 仓库元数据目录
+- [.gitignore](C:\Users\ShenPc-2\Desktop\AI\searchindex\.gitignore)
+  - 告诉 Git 哪些文件不要跟踪
+- [.gitattributes](C:\Users\ShenPc-2\Desktop\AI\searchindex\.gitattributes)
+  - Git 文件属性规则，比如 `.sh` 用 LF
+- [.dockerignore](C:\Users\ShenPc-2\Desktop\AI\searchindex\.dockerignore)
+  - Docker 构建时忽略哪些文件
+
+**Docker**
+- [Dockerfile](C:\Users\ShenPc-2\Desktop\AI\searchindex\Dockerfile)
+  - Docker 镜像构建文件
+- [docker-compose.yml](C:\Users\ShenPc-2\Desktop\AI\searchindex\docker-compose.yml)
+  - Docker 启动配置
+
+**数据库文件**
+- [searchindex.db](C:\Users\ShenPc-2\Desktop\AI\searchindex\searchindex.db)
+  - SQLite 主数据库
+- [searchindex.db-wal](C:\Users\ShenPc-2\Desktop\AI\searchindex\searchindex.db-wal)
+  - SQLite WAL 日志文件
+- [searchindex.db-shm](C:\Users\ShenPc-2\Desktop\AI\searchindex\searchindex.db-shm)
+  - SQLite 共享内存文件
+
+这 3 个一般都不该上传 GitHub。
+
+**临时和检查产物**
+- [.tmp_icons](C:\Users\ShenPc-2\Desktop\AI\searchindex\.tmp_icons)
+  - 图标相关临时目录
+- 一堆 `.codex-*.png`
+  - 这些是这轮开发时保存的页面检查截图、对比图、验收图
+  - 例如：
+    - [.codex-final-desktop.png](C:\Users\ShenPc-2\Desktop\AI\searchindex\.codex-final-desktop.png)
+    - [.codex-final-mobile.png](C:\Users\ShenPc-2\Desktop\AI\searchindex\.codex-final-mobile.png)
+    - [.codex-homepage-check.png](C:\Users\ShenPc-2\Desktop\AI\searchindex\.codex-homepage-check.png)
+
+这些也不该上传 GitHub。
+
+**你现在最该知道的**
+真正项目核心文件其实就这些：
+1. [public](C:\Users\ShenPc-2\Desktop\AI\searchindex\public)
+2. [server.js](C:\Users\ShenPc-2\Desktop\AI\searchindex\server.js)
+3. [package.json](C:\Users\ShenPc-2\Desktop\AI\searchindex\package.json)
+4. [README.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\README.md)
+5. [docs](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs)
+6. [scripts](C:\Users\ShenPc-2\Desktop\AI\searchindex\scripts)
+
+如果你要，我下一步可以直接帮你把这些文件再分成两类：
+1. 必须保留
+2. 可以删掉或不用管

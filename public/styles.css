@@ -1350,6 +1350,13 @@ button {
   margin-top: 14px;
 }
 
+.auth-form .field span {
+  color: rgba(232, 240, 255, 0.82);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .auth-submit {
   width: 100%;
   margin-top: 14px;

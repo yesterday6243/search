@@ -218,6 +218,9 @@ async function boot() {
     if (cachedStatePayload?.username && cachedStatePayload.username !== authState.username) {
       clearPersistedStateSnapshot();
       applyGuestState();
+      await hydrateStateFromServerOnce({ silent: true });
+    } else if (!cachedStatePayload?.username) {
+      await hydrateStateFromServerOnce({ silent: true });
     }
   } else {
     clearPersistedStateSnapshot();
@@ -519,6 +522,24 @@ async function refreshAuthStatus() {
   updateAuthMeta();
 }
 
+async function hydrateStateFromServerOnce(options = {}) {
+  if (!authState.loggedIn) {
+    return false;
+  }
+
+  try {
+    const payload = await fetchJson("/api/state");
+    applyState(payload, { persistLocalCache: true });
+    return true;
+  } catch (error) {
+    console.error(error);
+    if (options.silent !== true) {
+      showNotice("已登录，但拉取云端布局失败", "error");
+    }
+    return false;
+  }
+}
+
 async function handleOpenSettingsClick() {
   if (authState.loggedIn) {
     openSettings();
@@ -546,6 +567,7 @@ async function handleLoginSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
+    await hydrateStateFromServerOnce();
     closeAuthModal();
     renderSyncStatus();
     showNotice(`欢迎回来，${authState.username}`, "success");
@@ -591,6 +613,7 @@ async function handleRegisterSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
+    await hydrateStateFromServerOnce();
     closeAuthModal();
     renderSyncStatus();
     showNotice(`注册成功，欢迎 ${authState.username}`, "success");
