@@ -1,0 +1,21 @@
+列用户：
+
+node scripts/admin-reset-password.js --list
+直接重置：
+
+node scripts/admin-reset-password.js --username test1 --password NewPassword123
+交互式输入：
+
+node scripts/admin-reset-password.js
+指定数据库：
+
+node scripts/admin-reset-password.js --db ./searchindex.db --username test1 --password NewPassword123
+如果你不想清会话：
+
+node scripts/admin-reset-password.js --username test1 --password NewPassword123 --keep-sessions
+说明
+
+默认数据库路径就是项目根目录的 searchindex.db
+密码会按当前项目同样的 scrypt 参数重新生成哈希
+用户名规则和项目现有规则一致
+最低密码长度仍然是 8

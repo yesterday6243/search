@@ -57,16 +57,29 @@ cmd /c npm.cmd run dev
 - 数据库持久化到宿主机 `./data`
 - 现有 nginx 如需接入，只需手动反代到 `127.0.0.1:3210`
 
-构建并启动：
+注意：
+
+- 不要在宿主机执行 `npm install`
+- 宿主机 Node 版本不会影响 Docker 里的 Node 版本
+- 直接使用 Docker 构建和运行即可
+
+推荐部署步骤：
 
 ```bash
-docker compose up -d --build
+cd /root/search_index
+docker compose down --remove-orphans
+docker rm -f mx-search 2>/dev/null || true
+rm -rf node_modules
+docker compose --progress=plain build --no-cache
+docker compose up -d
 ```
 
-查看日志：
+检查状态：
 
 ```bash
-docker compose logs -f
+docker ps
+docker logs mx-search --tail 100
+curl http://127.0.0.1:3210
 ```
 
 停止：
@@ -91,6 +104,17 @@ ports:
 
 ```text
 http://127.0.0.1:3210
+```
+
+一个最小的 nginx 反代示例：
+
+```nginx
+location /search/ {
+    proxy_pass http://127.0.0.1:3210/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
 ```
 
 ## 项目结构
@@ -153,8 +177,7 @@ searchindex/
 1. 先读 [OPTIMIZATION_LOG.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\OPTIMIZATION_LOG.md)
 2. 再读 [docs/DEVELOPER_GUIDE.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs\DEVELOPER_GUIDE.md)
 3. 如果要改接口，再读 [docs/API.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs\API.md)
-4. 如果要部署到服务器，再读 [docs/DEPLOY_CENTOS.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs\DEPLOY_CENTOS.md)
-5. 最后再改代码
+4. 最后再改代码
 
 ## 关键说明
 
