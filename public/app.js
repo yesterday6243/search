@@ -97,6 +97,7 @@ const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
 const TAG_FADE_START_DISTANCE = 34;
 const TAG_FADE_HIDDEN_OFFSET = 2;
+const TAG_VIEWPORT_FADE_MIN_WIDTH = 1221;
 const CATEGORY_DROP_EDGE_PADDING = 16;
 const CATEGORY_DROP_END_ZONE = 42;
 const CATEGORY_DROP_END_OFFSET = 14;
@@ -168,6 +169,7 @@ let settingsTrailFrame = 0;
 let settingsQuickScrollFrame = 0;
 let tagViewportFadeFrame = 0;
 let tagLabelFitFrame = 0;
+let tagOverflowLayoutFrame = 0;
 let backgroundIntervalTimer = 0;
 let backgroundDelayTimer = 0;
 const persistedBackgroundSnapshot = loadPersistedBackgroundSnapshot();
@@ -354,6 +356,7 @@ function bindEvents() {
   window.addEventListener("resize", queueSettingsQuickScrollUpdate, { passive: true });
   window.addEventListener("resize", queueTagViewportFadeUpdate, { passive: true });
   window.addEventListener("resize", queueTagLabelFit, { passive: true });
+  window.addEventListener("resize", queueTagOverflowLayoutUpdate, { passive: true });
   siteTitleDisplay.addEventListener("click", () => {
     void refreshBackgroundNow({ manual: true, force: true });
   });
@@ -1156,8 +1159,6 @@ function renderTagBoard() {
   tagBoard.innerHTML = appState.categories
     .map((category) => {
       const isExpanded = expandedCategoryIds.has(category.id);
-      const hasOverflow = category.links.length > MAX_TAGS_PER_ROW;
-      const rowCount = Math.max(1, Math.ceil(category.links.length / MAX_TAGS_PER_ROW));
       const content = category.links.length
         ? `<div class="tag-grid">
             ${category.links
@@ -1182,8 +1183,7 @@ function renderTagBoard() {
               .join("")}
           </div>`
         : '<div class="empty-state">这个分类还没有标签，去设置里添加吧。</div>';
-      const tail = hasOverflow
-        ? `
+      const tail = `
           <button
             class="category-expand-btn ${isExpanded ? "is-expanded" : ""}"
             type="button"
@@ -1194,29 +1194,16 @@ function renderTagBoard() {
           >
             <span class="category-expand-icon" aria-hidden="true"></span>
           </button>
-        `
-        : `
-          <button
-            class="category-expand-btn is-disabled"
-            type="button"
-            disabled
-            aria-disabled="true"
-            aria-label="当前分类已全部显示"
-            title="当前分类已全部显示"
-          >
-            <span class="category-expand-icon" aria-hidden="true"></span>
-          </button>
         `;
       const rowClassNames = [
         "category-row",
-        hasOverflow ? "has-overflow" : "",
         isExpanded ? "is-expanded" : "",
       ]
         .filter(Boolean)
         .join(" ");
 
       return `
-        <section class="${rowClassNames}" data-category-id="${escapeAttribute(category.id)}" style="--category-rows:${rowCount};">
+        <section class="${rowClassNames}" data-category-id="${escapeAttribute(category.id)}" style="--category-rows:1;">
           <div
             class="category-head"
             draggable="true"
@@ -1238,6 +1225,7 @@ function renderTagBoard() {
     })
     .join("");
   ensureCategoryDropIndicator();
+  queueTagOverflowLayoutUpdate();
   queueTagLabelFit();
   queueTagViewportFadeUpdate();
 }
@@ -2407,6 +2395,81 @@ function queueTagLabelFit() {
   });
 }
 
+function queueTagOverflowLayoutUpdate() {
+  if (tagOverflowLayoutFrame) {
+    window.cancelAnimationFrame(tagOverflowLayoutFrame);
+  }
+  tagOverflowLayoutFrame = window.requestAnimationFrame(() => {
+    tagOverflowLayoutFrame = 0;
+    updateTagOverflowLayout();
+  });
+}
+
+function getGridColumnCount(gridNode) {
+  if (!(gridNode instanceof HTMLElement)) {
+    return MAX_TAGS_PER_ROW;
+  }
+
+  const template = window.getComputedStyle(gridNode).gridTemplateColumns || "";
+  const columns = template
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .length;
+
+  return Math.max(1, columns || MAX_TAGS_PER_ROW);
+}
+
+function updateCategoryExpandButtonState(buttonNode, hasOverflow, isExpanded) {
+  if (!(buttonNode instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  buttonNode.disabled = !hasOverflow;
+  buttonNode.classList.toggle("is-disabled", !hasOverflow);
+  buttonNode.classList.toggle("is-expanded", hasOverflow && isExpanded);
+  buttonNode.setAttribute("aria-disabled", hasOverflow ? "false" : "true");
+
+  if (!hasOverflow) {
+    buttonNode.setAttribute("aria-expanded", "false");
+    buttonNode.setAttribute("aria-label", "当前分类已全部显示");
+    buttonNode.title = "当前分类已全部显示";
+    return;
+  }
+
+  buttonNode.setAttribute("aria-expanded", isExpanded ? "true" : "false");
+  buttonNode.setAttribute("aria-label", isExpanded ? "收起分类标签" : "展开更多标签");
+  buttonNode.title = isExpanded ? "收起分类标签" : "展开更多标签";
+}
+
+function updateTagOverflowLayout() {
+  const rows = tagBoard.querySelectorAll(".category-row");
+  rows.forEach((rowNode) => {
+    if (!(rowNode instanceof HTMLElement)) {
+      return;
+    }
+
+    const categoryId = rowNode.dataset.categoryId || "";
+    const gridNode = rowNode.querySelector(".tag-grid");
+    const buttonNode = rowNode.querySelector("[data-toggle-category]");
+    const linkCount = gridNode?.querySelectorAll(".tag-card").length || 0;
+    const columns = getGridColumnCount(gridNode);
+    const hasOverflow = linkCount > columns;
+    const rowCount = Math.max(1, Math.ceil(linkCount / columns));
+    const isExpanded = hasOverflow && expandedCategoryIds.has(categoryId);
+
+    rowNode.style.setProperty("--category-rows", String(rowCount));
+    rowNode.classList.toggle("has-overflow", hasOverflow);
+    rowNode.classList.toggle("is-expanded", isExpanded);
+
+    if (!hasOverflow && categoryId) {
+      expandedCategoryIds.delete(categoryId);
+    }
+
+    updateCategoryExpandButtonState(buttonNode, hasOverflow, isExpanded);
+  });
+}
+
 function fitTagLabelText() {
   const labels = tagBoard.querySelectorAll(".tile-label");
   labels.forEach((labelNode) => {
@@ -2708,6 +2771,15 @@ function updateTagViewportFade() {
   for (const row of rows) {
     row.style.opacity = "";
     row.style.pointerEvents = "";
+  }
+
+  for (const target of fadeTargets) {
+    target.style.opacity = "";
+    target.style.pointerEvents = "";
+  }
+
+  if (window.innerWidth < TAG_VIEWPORT_FADE_MIN_WIDTH) {
+    return;
   }
 
   const searchRect = (searchBar && searchBar.getBoundingClientRect()) || searchStage.getBoundingClientRect();
