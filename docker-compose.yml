@@ -1,0 +1,16 @@
+services:
+  mx-search:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mx-search
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_PATH: /app/data/searchindex.db
+    ports:
+      - "127.0.0.1:3210:3000"
+    volumes:
+      - ./data:/app/data
+

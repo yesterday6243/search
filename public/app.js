@@ -20,6 +20,9 @@ const syncBackupList = document.getElementById("syncBackupList");
 const confirmModal = document.getElementById("confirmModal");
 const confirmModalTitle = document.getElementById("confirmModalTitle");
 const confirmModalMessage = document.getElementById("confirmModalMessage");
+const confirmModalInputField = document.getElementById("confirmModalInputField");
+const confirmModalInputLabel = document.getElementById("confirmModalInputLabel");
+const confirmModalInput = document.getElementById("confirmModalInput");
 const closeConfirmModalButton = document.getElementById("closeConfirmModalButton");
 const confirmModalCancelButton = document.getElementById("confirmModalCancelButton");
 const confirmModalConfirmButton = document.getElementById("confirmModalConfirmButton");
@@ -39,6 +42,7 @@ const addEngineButton = document.getElementById("addEngineButton");
 const addCategoryButton = document.getElementById("addCategoryButton");
 const clearHistoryButton = document.getElementById("clearHistoryButton");
 const historyCountLabel = document.getElementById("historyCountLabel");
+const historyLimitInput = document.getElementById("historyLimitInput");
 const engineEditor = document.getElementById("engineEditor");
 const categoryEditor = document.getElementById("categoryEditor");
 const siteTitleInput = document.getElementById("siteTitleInput");
@@ -261,6 +265,10 @@ function bindEvents() {
     }
     if (action === "restore") {
       void handleRestoreBackup(backupId);
+      return;
+    }
+    if (action === "rename") {
+      void handleRenameBackup(backupId, actionButton.dataset.backupName || "");
       return;
     }
     if (action === "delete") {
@@ -666,6 +674,9 @@ function openConfirmDialog({
   confirmText = "确定",
   cancelText = "取消",
   scopeElement = null,
+  inputValue = null,
+  inputLabel = "名称",
+  inputPlaceholder = "",
 } = {}) {
   if (!confirmModal || !confirmModalTitle || !confirmModalMessage) {
     return Promise.resolve(false);
@@ -683,6 +694,13 @@ function openConfirmDialog({
   if (confirmModalCancelButton) {
     confirmModalCancelButton.textContent = cancelText;
   }
+  const useInput = inputValue !== null;
+  if (confirmModalInputField && confirmModalInput && confirmModalInputLabel) {
+    confirmModalInputField.classList.toggle("hidden", !useInput);
+    confirmModalInputLabel.textContent = inputLabel || "名称";
+    confirmModalInput.placeholder = inputPlaceholder || "";
+    confirmModalInput.value = useInput ? String(inputValue) : "";
+  }
   if (confirmScopeElement instanceof Element) {
     confirmScopeElement.classList.remove("has-local-confirm");
   }
@@ -692,7 +710,12 @@ function openConfirmDialog({
   confirmModal.classList.remove("hidden");
   confirmModal.setAttribute("aria-hidden", "false");
   syncOverlayVisibility();
-  confirmModalConfirmButton?.focus();
+  if (useInput && confirmModalInput) {
+    confirmModalInput.focus();
+    confirmModalInput.select();
+  } else {
+    confirmModalConfirmButton?.focus();
+  }
 
   return new Promise((resolve) => {
     confirmResolver = resolve;
@@ -713,6 +736,13 @@ function resolveConfirmDialog(result) {
   const resolver = confirmResolver;
   confirmResolver = null;
   if (resolver) {
+    if (!confirmModalInputField?.classList.contains("hidden") && confirmModalInput) {
+      resolver({
+        confirmed: Boolean(result),
+        value: confirmModalInput.value.trim(),
+      });
+      return;
+    }
     resolver(Boolean(result));
   }
 }
@@ -800,10 +830,14 @@ function renderBackupList() {
     .map((backup, index) => {
       const backupId = escapeAttribute(backup.id || "");
       const createdAt = backup.createdAt ? formatPreciseTime(backup.createdAt) : "未知时间";
+      const backupName = (backup.name || `备份 ${syncModalBackups.length - index}`).trim();
       return `
         <div class="sync-backup-item">
           <div>
-            <p class="sync-backup-title">备份 ${syncModalBackups.length - index}</p>
+            <div class="sync-backup-title-row">
+              <p class="sync-backup-title">${escapeHtml(backupName)}</p>
+              <button class="sync-backup-rename" type="button" data-backup-action="rename" data-backup-id="${backupId}" data-backup-name="${escapeAttribute(backupName)}">重命名</button>
+            </div>
             <p class="sync-backup-meta">创建时间 · ${escapeHtml(createdAt)}</p>
           </div>
           <div class="sync-backup-actions">
@@ -886,6 +920,51 @@ async function handleRestoreBackup(backupId) {
       return;
     }
     setSyncModalMessage(error.message || "同步失败，请稍后重试");
+  } finally {
+    setSyncModalBusyState(false);
+  }
+}
+
+async function handleRenameBackup(backupId, currentName = "") {
+  if (!authState.loggedIn || !backupId || syncModalBusy) {
+    return;
+  }
+  const result = await openConfirmDialog({
+    title: "重命名备份",
+    message: "修改这条云端备份的显示名称，方便后续识别。",
+    confirmText: "保存名称",
+    scopeElement: syncModal,
+    inputValue: currentName,
+    inputLabel: "备份名称",
+    inputPlaceholder: "输入备份名称",
+  });
+  if (!result?.confirmed) {
+    return;
+  }
+  const nextName = String(result.value || "").trim();
+  if (!nextName) {
+    setSyncModalMessage("备份名称不能为空");
+    return;
+  }
+
+  setSyncModalBusyState(true);
+  setSyncModalMessage("");
+  try {
+    const payload = await fetchJson(`/api/backups/${encodeURIComponent(backupId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: nextName }),
+    });
+    syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : syncModalBackups;
+    renderBackupList();
+    setSyncModalMessage("备份名称已更新。", "success");
+    showNotice("备份名称已更新", "success");
+  } catch (error) {
+    console.error(error);
+    if (await handleSyncAuthError(error)) {
+      return;
+    }
+    setSyncModalMessage(error.message || "重命名失败，请稍后重试");
   } finally {
     setSyncModalBusyState(false);
   }
@@ -1257,6 +1336,14 @@ function normalizeTagOpacity(value) {
   return Math.max(35, Math.min(100, Math.round(numeric)));
 }
 
+function normalizeHistoryLimit(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return 100;
+  }
+  return Math.max(1, Math.min(500, Math.round(numeric)));
+}
+
 function updateTagOpacityLabel(opacity) {
   if (!tagOpacityValue) {
     return;
@@ -1425,6 +1512,11 @@ function renderSettingsDrawer() {
   settingsDraft.settings.tagOpacity = tagOpacity;
   tagOpacityInput.value = String(tagOpacity);
   updateTagOpacityLabel(tagOpacity);
+  const historyLimit = normalizeHistoryLimit(settingsDraft.settings.historyLimit);
+  settingsDraft.settings.historyLimit = historyLimit;
+  if (historyLimitInput) {
+    historyLimitInput.value = String(historyLimit);
+  }
   backgroundProviderInput.value = settingsDraft.settings.background.provider;
   backgroundSeedInput.value = settingsDraft.settings.background.seed;
   backgroundCustomUrlInput.value = settingsDraft.settings.background.customUrl;
@@ -1549,6 +1641,13 @@ function handleSettingsInput(event) {
     settingsDraft.settings.tagOpacity = opacity;
     updateTagOpacityLabel(opacity);
     applyTagOpacity(opacity);
+    return;
+  }
+
+  if (target === historyLimitInput) {
+    const limit = normalizeHistoryLimit(target.value);
+    settingsDraft.settings.historyLimit = limit;
+    historyLimitInput.value = String(limit);
     return;
   }
 
@@ -1731,11 +1830,33 @@ async function saveSettings(event) {
   }
 
   try {
+    const historyLimitOnlyChange =
+      JSON.stringify({
+        settings: {
+          ...appState.settings,
+          historyLimit: undefined,
+        },
+        engines: appState.engines,
+        selectedEngineId: appState.selectedEngineId,
+        categories: appState.categories,
+      }) ===
+      JSON.stringify({
+        settings: {
+          ...settingsDraft.settings,
+          historyLimit: undefined,
+        },
+        engines: settingsDraft.engines,
+        selectedEngineId: settingsDraft.selectedEngineId,
+        categories: settingsDraft.categories,
+      });
+
     await updateState({
       settings: settingsDraft.settings,
       engines: settingsDraft.engines,
       selectedEngineId: settingsDraft.selectedEngineId,
       categories: settingsDraft.categories,
+    }, {
+      markDirty: !historyLimitOnlyChange,
     });
     closeSettings();
     showNotice("设置已保存到本地", "success");
@@ -1748,7 +1869,7 @@ async function saveSettings(event) {
 async function clearHistory() {
   const confirmed = await openConfirmDialog({
     title: "清空本地搜索历史",
-    message: "这会删除当前浏览器里最近 100 条搜索历史，且不会影响云端备份。是否继续？",
+    message: `这会删除当前浏览器里最近 ${normalizeHistoryLimit(appState?.settings?.historyLimit)} 条搜索历史，且不会影响云端备份。是否继续？`,
     confirmText: "清空历史",
     scopeElement: settingsDrawer,
   });
@@ -1767,7 +1888,7 @@ async function clearHistory() {
   showNotice("本地搜索历史已清空", "success");
 }
 
-async function updateState(patch) {
+async function updateState(patch, options = {}) {
   const baseState = appState || structuredClone(GUEST_STATE);
   const mergedState = mergeLocalState(baseState, patch);
   const nextState = sanitizeCachedStateSnapshot(mergedState);
@@ -1780,7 +1901,7 @@ async function updateState(patch) {
     updatedAt: new Date().toISOString(),
   };
   applyState(payload);
-  if (authState.loggedIn) {
+  if (authState.loggedIn && options.markDirty !== false) {
     markSyncDirty();
   }
   return payload;
@@ -2906,7 +3027,7 @@ function sanitizeCachedStateSnapshot(state) {
         overlayOpacity: normalizeOverlayOpacity(backgroundSource.overlayOpacity),
         bingRecentCount: normalizeBingRecentCount(backgroundSource.bingRecentCount),
       },
-      historyLimit: Number(settingsSource.historyLimit) || 100,
+      historyLimit: normalizeHistoryLimit(settingsSource.historyLimit),
     },
     engines: Array.isArray(source.engines) ? source.engines : [],
     selectedEngineId: typeof source.selectedEngineId === "string" ? source.selectedEngineId : "",
@@ -2992,7 +3113,7 @@ function addLocalHistoryEntry(query, engineId) {
     return;
   }
 
-  const limit = Number(appState.settings?.historyLimit) || 100;
+  const limit = normalizeHistoryLimit(appState.settings?.historyLimit);
   const normalizedQuery = sanitizeHistoryQuery(query);
   if (!normalizedQuery) {
     return;
@@ -3020,7 +3141,7 @@ function addLocalHistoryEntry(query, engineId) {
 
 function loadLocalHistory(engines, selectedEngineId, limit = 100) {
   const validEngineIds = new Set((engines || []).map((engine) => engine.id));
-  const safeLimit = Number(limit) > 0 ? Number(limit) : 100;
+  const safeLimit = normalizeHistoryLimit(limit);
   let parsed = [];
 
   try {

@@ -1,0 +1,12 @@
+.git
+.github
+.vscode
+node_modules
+npm-debug.log*
+*.log
+.DS_Store
+.codex-*.png
+searchindex.db
+searchindex.db-shm
+searchindex.db-wal
+data

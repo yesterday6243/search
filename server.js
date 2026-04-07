@@ -4,13 +4,16 @@ const path = require("path");
 const Database = require("better-sqlite3");
 
 const PORT = Number(process.env.PORT) || 3000;
+const HOST = (typeof process.env.HOST === "string" && process.env.HOST.trim()) || "0.0.0.0";
 const HISTORY_LIMIT = 100;
 const USER_LIMIT = 50;
 const PASSWORD_MIN_LENGTH = 8;
 const SESSION_COOKIE_NAME = "mx_search_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const publicDir = path.join(__dirname, "public");
-const databasePath = path.join(__dirname, "searchindex.db");
+const databasePath =
+  (typeof process.env.DATABASE_PATH === "string" && process.env.DATABASE_PATH.trim()) ||
+  path.join(__dirname, "searchindex.db");
 const BING_HOST = "https://cn.bing.com";
 const BING_RECENT_MIN = 1;
 const BING_RECENT_MAX = 8;
@@ -323,6 +326,26 @@ app.post("/api/backups", requireAuth, (req, res) => {
   res.status(201).json(backup);
 });
 
+app.patch("/api/backups/:backupId", requireAuth, (req, res) => {
+  const backupName = sanitizeBackupName(req.body?.name);
+  if (!backupName) {
+    res.status(400).json({ message: "name is required" });
+    return;
+  }
+
+  const backup = renameUserBackup(req.authUser.id, req.params.backupId, backupName);
+  if (!backup) {
+    res.status(404).json({ message: "备份不存在" });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    backup,
+    backups: listUserBackups(req.authUser.id),
+  });
+});
+
 app.delete("/api/backups/:backupId", requireAuth, (req, res) => {
   const deleted = deleteUserBackup(req.authUser.id, req.params.backupId);
   if (!deleted) {
@@ -409,8 +432,8 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log(`Search homepage is running at http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Search homepage is running at http://${HOST}:${PORT}`);
 });
 
 function ensureDatabaseSchema() {
@@ -447,11 +470,16 @@ function ensureDatabaseSchema() {
     CREATE TABLE IF NOT EXISTS user_backups (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
       data TEXT NOT NULL,
       created_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `).run();
+
+  try {
+    db.prepare(`ALTER TABLE user_backups ADD COLUMN name TEXT NOT NULL DEFAULT ''`).run();
+  } catch {}
 
   db.prepare(`
     CREATE INDEX IF NOT EXISTS idx_user_backups_user_created
@@ -740,7 +768,7 @@ function listUserBackups(userId) {
   return db
     .prepare(
       `
-        SELECT id, created_at
+        SELECT id, name, created_at
         FROM user_backups
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
@@ -750,6 +778,7 @@ function listUserBackups(userId) {
     .all(userId)
     .map((row) => ({
       id: String(row.id),
+      name: sanitizeBackupName(row.name) || formatBackupName(row.created_at),
       createdAt: row.created_at,
     }));
 }
@@ -763,7 +792,7 @@ function getUserBackupRecord(userId, backupId) {
   const row = db
     .prepare(
       `
-        SELECT id, data, created_at
+        SELECT id, name, data, created_at
         FROM user_backups
         WHERE user_id = ? AND id = ?
       `
@@ -776,6 +805,7 @@ function getUserBackupRecord(userId, backupId) {
 
   return {
     id: String(row.id),
+    name: sanitizeBackupName(row.name) || formatBackupName(row.created_at),
     createdAt: row.created_at,
     state: sanitizeState(safelyParse(row.data), defaultState),
   };
@@ -784,12 +814,13 @@ function getUserBackupRecord(userId, backupId) {
 function createUserBackup(userId, inputState) {
   const state = sanitizeState(inputState, defaultState);
   const createdAt = new Date().toISOString();
+  const backupName = formatBackupName(createdAt);
   const insert = db.prepare(
     `
-      INSERT INTO user_backups (user_id, data, created_at)
-      VALUES (?, ?, ?)
+      INSERT INTO user_backups (user_id, name, data, created_at)
+      VALUES (?, ?, ?, ?)
     `
-  ).run(userId, JSON.stringify(state), createdAt);
+  ).run(userId, backupName, JSON.stringify(state), createdAt);
 
   db.prepare(
     `
@@ -807,9 +838,33 @@ function createUserBackup(userId, inputState) {
 
   return {
     id: String(insert.lastInsertRowid),
+    name: backupName,
     createdAt,
     backups: listUserBackups(userId),
   };
+}
+
+function renameUserBackup(userId, backupId, backupName) {
+  const numericId = Number(backupId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return null;
+  }
+
+  const result = db
+    .prepare(
+      `
+        UPDATE user_backups
+        SET name = ?
+        WHERE user_id = ? AND id = ?
+      `
+    )
+    .run(backupName, userId, numericId);
+
+  if (!result.changes) {
+    return null;
+  }
+
+  return getUserBackupRecord(userId, numericId);
 }
 
 function deleteUserBackup(userId, backupId) {
@@ -1428,6 +1483,21 @@ function sanitizeOpacity(value, fallback = 100) {
     return 100;
   }
   return Math.max(0, Math.min(100, Math.round(source)));
+}
+
+function sanitizeBackupName(value, fallback = "") {
+  const trimmed = sanitizeText(value, fallback).slice(0, 32).trim();
+  return trimmed;
+}
+
+function formatBackupName(value) {
+  const date = new Date(value || Date.now());
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `备份 ${year}/${month}/${day} ${hour}:${minute}`;
 }
 
 function sanitizeSearchBarHeight(value, fallback = 68) {

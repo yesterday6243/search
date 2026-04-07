@@ -1,26 +1,41 @@
-# 个人搜索首页（mx search）
+﻿# mx search
 
-一个可自部署的个人搜索导航首页，支持账号登录、云端配置同步和标签拖拽布局。
+一个可自行部署的个人搜索导航首页。
 
-## 功能概览
+这不是复杂的多用户协作系统，而是一个小体量、长期使用、以本地体验为优先的首页工具。当前版本的重点能力：
 
-- 首页搜索框 + 独立搜索引擎切换按钮
-- 标签分类导航（每行 10 个，支持展开）
-- 标签拖拽排序（分类内/跨分类）
-- 分类顺序拖拽调整
-- 设置大弹窗（居中）与动态面包屑提示
-- 背景图支持 Bing/Picsum/自定义地址，支持定时轮换
-- 点击左上角 `mx search` 可手动切换背景
-- 搜索历史仅保存在本地浏览器（`localStorage`），不上传后端
-- 账号系统（用户名 + 密码注册登录，无验证码）
-- 登录后每个用户的数据与布局独立保存并同步
-- 注册用户上限：50
+- 搜索框 + 可切换搜索引擎
+- 分类标签导航
+- 标签和分类拖拽排序
+- 自定义背景图
+- 图标本地缓存 + 服务器共享缓存
+- 账号登录
+- 手动云端备份 / 手动同步
 
-## 本地开发
+## 快速开始
+
+安装依赖：
 
 ```bash
 npm install
+```
+
+开发模式：
+
+```bash
 npm run dev
+```
+
+生产启动：
+
+```bash
+npm start
+```
+
+默认地址：
+
+```text
+http://localhost:3000
 ```
 
 如果 PowerShell 阻止 `npm.ps1`，可以改用：
@@ -30,90 +45,127 @@ cmd /c npm.cmd install
 cmd /c npm.cmd run dev
 ```
 
-生产启动：
+## Docker 部署
+
+项目现在支持 Docker 部署，适合已经有很多现有 nginx 业务的服务器。
+
+设计原则：
+
+- 容器内应用监听 `3000`
+- 宿主机默认只绑定到 `127.0.0.1:3210`
+- 不直接暴露公网端口
+- 数据库持久化到宿主机 `./data`
+- 现有 nginx 如需接入，只需手动反代到 `127.0.0.1:3210`
+
+构建并启动：
 
 ```bash
-npm start
+docker compose up -d --build
 ```
 
-默认地址：`http://localhost:3000`
-
-## Linux 一键部署
-
-项目内置交互式部署脚本：
-
-`scripts/deploy-linux.sh`
-
-脚本特性：
-
-- 部署到独立目录，不覆盖你的原始项目目录
-- 可自定义端口（含端口占用检查）
-- 可选服务模式：`systemd` / `pm2` / `none`
-- 可自定义运行用户与服务名
-- 二次部署升级时保留已有数据库文件
-
-### 使用方法
+查看日志：
 
 ```bash
-chmod +x scripts/deploy-linux.sh
-./scripts/deploy-linux.sh
+docker compose logs -f
 ```
 
-脚本会提示你输入：
-
-- 部署目录（默认：`/opt/mx-search`）
-- 运行用户（默认：当前用户）
-- 监听端口（默认：`3000`）
-- 服务模式（`systemd` / `pm2` / `none`）
-- 服务名称（默认：`mx-search-<port>`）
-
-## 服务管理
-
-### systemd 模式
+停止：
 
 ```bash
-sudo systemctl status mx-search-3000
-sudo systemctl restart mx-search-3000
-sudo systemctl stop mx-search-3000
-sudo journalctl -u mx-search-3000 -f
+docker compose down
 ```
 
-把 `mx-search-3000` 替换成你的实际服务名。
+默认文件：
 
-### pm2 模式
+- [Dockerfile](C:\Users\ShenPc-2\Desktop\AI\searchindex\Dockerfile)
+- [docker-compose.yml](C:\Users\ShenPc-2\Desktop\AI\searchindex\docker-compose.yml)
 
-```bash
-pm2 status
-pm2 logs <service-name>
-pm2 restart <service-name>
-pm2 delete <service-name>
+如需修改绑定端口，直接改 `docker-compose.yml` 里的这一行：
+
+```yaml
+ports:
+  - "127.0.0.1:3210:3000"
 ```
 
-## 升级部署
+如果你要让现有 nginx 反代进来，目标上游就是：
 
-代码更新后，再执行一次部署脚本即可：
-
-```bash
-./scripts/deploy-linux.sh
+```text
+http://127.0.0.1:3210
 ```
 
-脚本会把新代码同步到部署目录，并重新安装依赖。
+## 项目结构
 
-## 数据与同步说明
+```text
+searchindex/
+├─ public/
+│  ├─ index.html        前端页面结构、弹层骨架
+│  ├─ styles.css        全部样式
+│  └─ app.js            前端交互、状态、缓存、备份/同步逻辑
+├─ data/                Docker 持久化数据库目录（运行后生成）
+├─ Dockerfile           Docker 镜像构建文件
+├─ docker-compose.yml   Docker 启动配置
+├─ scripts/
+│  └─ deploy-linux.sh   Linux 部署脚本
+├─ docs/
+│  └─ DEVELOPER_GUIDE.md 开发接手说明
+├─ server.js            Express 服务、SQLite 读写、API
+├─ searchindex.db       主数据库
+├─ OPTIMIZATION_LOG.md  迭代修复记录
+├─ package.json
+└─ README.md
+```
 
-- 后端数据库文件：`searchindex.db`
-- 同步到同一服务器下的多设备：分类、标签、搜索引擎、背景设置、布局等
-- 搜索历史仅本地保存（浏览器 `localStorage`）
+## 当前数据模型
+
+项目当前分成三层数据：
+
+1. 本地浏览器数据
+- 当前页面状态快照
+- 搜索历史
+- UI 偏好
+- 背景快照
+- 图标缓存
+- 备份/同步状态元信息
+
+2. 用户后端状态
+- 用户自己的标签、分类、引擎、设置
+- 用于长期保存用户配置
+
+3. 用户后端备份
+- 手动触发
+- 最多保留最近 3 条
+- 支持重命名、删除、恢复到本地
+
+## 现在的同步策略
+
+当前不是自动同步模型。
+
+规则是：
+
+1. 本地修改先落本地
+2. 用户手动点击“备份”时，才把当前本地数据写入后端备份
+3. 用户手动点击“同步”时，才从选定备份恢复并覆盖本地
+
+这样做的目的，是避免多设备同时使用时出现静默覆盖。
+
+## 接手时先看什么
+
+1. 先读 [OPTIMIZATION_LOG.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\OPTIMIZATION_LOG.md)
+2. 再读 [docs/DEVELOPER_GUIDE.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs\DEVELOPER_GUIDE.md)
+3. 如果要改接口，再读 [docs/API.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs\API.md)
+4. 如果要部署到服务器，再读 [docs/DEPLOY_CENTOS.md](C:\Users\ShenPc-2\Desktop\AI\searchindex\docs\DEPLOY_CENTOS.md)
+5. 最后再改代码
+
+## 关键说明
+
+1. 搜索历史只保存在当前浏览器，不上传后端
+2. 图标优先走本地缓存，其次服务器共享缓存，再次才走外部 favicon 源
+3. 背景切换结果会缓存到本地，避免刷新闪动
+4. 右上角状态按钮现在表示“备份状态”，不再是普通消息提示器
+5. 普通操作反馈统一走页面内 toast，不走浏览器原生提示框
 
 ## 维护约定
 
-- 每次修复/优化前，先查看 `OPTIMIZATION_LOG.md`
-- 每次修复/优化后，追加记录：现象、根因、处理方案、涉及文件
-
-## 公网访问建议
-
-如果要暴露到公网，建议额外加一层访问控制：
-
-- Nginx Basic Auth
-- Cloudflare Access
-- 或仅限内网访问
+1. 修改前先看 `OPTIMIZATION_LOG.md`
+2. 大的修复和交互改动，继续写进 `OPTIMIZATION_LOG.md`
+3. 如果调整备份、同步、图标缓存、背景逻辑，优先更新开发文档，避免后续误判

@@ -1245,6 +1245,13 @@ button {
   line-height: 1.6;
 }
 
+.history-settings-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .settings-footer {
   flex: 0 0 auto;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -1363,6 +1370,14 @@ button {
   justify-content: flex-end;
 }
 
+.confirm-modal .field {
+  margin-top: 16px;
+}
+
+.confirm-modal .field input {
+  background: rgba(255, 255, 255, 0.06);
+}
+
 .settings-drawer.has-local-confirm,
 .sync-modal.has-local-confirm {
   isolation: isolate;
@@ -1421,6 +1436,30 @@ button {
   font-size: 15px;
   font-weight: 700;
   color: #ffffff;
+}
+
+.sync-backup-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sync-backup-rename {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(227, 236, 255, 0.76);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.sync-backup-rename:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .sync-backup-meta {

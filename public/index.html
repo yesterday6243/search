@@ -270,7 +270,13 @@
               <span id="historyCountLabel">最近保留 100 条</span>
             </div>
             <div class="history-settings">
-              <p>搜索框会自动记住最近 100 条搜索，仅保存在当前浏览器，不会上传后端。</p>
+              <div class="history-settings-main">
+                <label class="field">
+                  <span>本地保留条数</span>
+                  <input id="historyLimitInput" type="number" inputmode="numeric" min="1" max="500" step="1" />
+                </label>
+                <p>搜索历史只保存在当前浏览器。修改这里会立即影响本机保留条数，不会上传后端。</p>
+              </div>
               <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
             </div>
           </section>
@@ -365,6 +371,10 @@
         <button class="ghost-button" id="closeConfirmModalButton" type="button">关闭</button>
       </div>
       <p class="auth-meta" id="confirmModalMessage">确认后会继续执行当前操作。</p>
+      <label class="field hidden" id="confirmModalInputField">
+        <span id="confirmModalInputLabel">名称</span>
+        <input id="confirmModalInput" type="text" maxlength="32" />
+      </label>
       <div class="sync-modal-actions confirm-modal-actions">
         <button class="ghost-button" id="confirmModalCancelButton" type="button">取消</button>
         <button class="primary-button" id="confirmModalConfirmButton" type="button">确定</button>
