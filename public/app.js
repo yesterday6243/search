@@ -68,6 +68,7 @@ const LOCAL_HISTORY_STORAGE_KEY = "mx_search_local_history_v1";
 const BACKGROUND_SWITCH_INTERVAL_MS = 60 * 60 * 1000;
 const ICON_CACHE_STORAGE_KEY = "mx_icon_source_cache_v1";
 const ICON_CACHE_MAX_ENTRIES = 300;
+const ICON_CACHE_SERVER_PROMOTE_DEBOUNCE_MS = 1200;
 const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
 const TAG_FADE_START_DISTANCE = 34;
@@ -161,11 +162,14 @@ let authState = {
   canRegister: true,
 };
 let iconSourceCache = loadIconSourceCache();
+let serverDefaultIconCache = {};
 let categoryDropIndicator = null;
 let currentActiveEngineId = "";
 const engineButtonIconNodeCache = new Map();
 const engineRenderKeyCache = new Map();
 const bingBackgroundCacheByCount = new Map();
+let iconCachePromoteTimer = 0;
+const pendingIconPromoteHosts = new Set();
 
 boot();
 
@@ -535,7 +539,9 @@ async function handleLogout() {
 async function loadState(silent = false) {
   try {
     const payload = await fetchJson("/api/state");
+    await hydrateServerIconCacheForState(payload.state);
     applyState(payload);
+    queuePromoteRelevantIconCacheEntries(payload.state);
     if (!silent) {
       setStatus("云端数据已同步", "success");
     }
@@ -561,7 +567,9 @@ async function pollState() {
   try {
     const payload = await fetchJson("/api/state");
     if (payload.updatedAt !== appState.updatedAt) {
+      await hydrateServerIconCacheForState(payload.state);
       applyState(payload);
+      queuePromoteRelevantIconCacheEntries(payload.state);
       setStatus("检测到其他设备更新，已自动同步", "success");
     }
   } catch (error) {
@@ -623,8 +631,8 @@ function renderActiveEngineButton() {
   }
 
   const iconData = getFaviconUrlFromTemplate(activeEngine.urlTemplate);
-  const firstSource = iconData.sources[0] || "";
-  const renderKey = `${activeEngine.id}|${firstSource}`;
+  const renderSource = getPreferredIconDisplaySource(iconData);
+  const renderKey = `${activeEngine.id}|${renderSource}`;
   let iconNode = engineButtonIconNodeCache.get(activeEngine.id) || null;
   const shouldRefreshNode = !iconNode || engineRenderKeyCache.get(activeEngine.id) !== renderKey;
 
@@ -657,8 +665,8 @@ function primeEngineButtonIcons() {
 
   appState.engines.forEach((engine) => {
     const iconData = getFaviconUrlFromTemplate(engine.urlTemplate);
-    const firstSource = iconData.sources?.[0] || "";
-    const renderKey = `${engine.id}|${firstSource}`;
+    const renderSource = getPreferredIconDisplaySource(iconData);
+    const renderKey = `${engine.id}|${renderSource}`;
     const existing = engineButtonIconNodeCache.get(engine.id) || null;
     if (existing && engineRenderKeyCache.get(engine.id) === renderKey) {
       return;
@@ -2488,18 +2496,53 @@ function buildIconSources(url) {
   if (!host) {
     return { host: "", sources: [] };
   }
+  const pathBase = getIconPathBase(url.pathname);
   const native = `${url.origin}/favicon.ico`;
   const nativePng = `${url.origin}/favicon.png`;
+  const pathNative = pathBase ? `${url.origin}${pathBase}favicon.ico` : "";
+  const pathNativePng = pathBase ? `${url.origin}${pathBase}favicon.png` : "";
   const duck = `https://icons.duckduckgo.com/ip3/${host}.ico`;
   const s2 = `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}`;
-  const s2DomainUrl = `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(url.origin)}`;
+  const s2DomainUrl = `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(url.href)}`;
   const iconHorse = `https://icon.horse/icon/${encodeURIComponent(host)}`;
   const unavatar = `https://unavatar.io/${encodeURIComponent(host)}`;
-  const cached = iconSourceCache[host] || "";
-  const sources = [cached, native, nativePng, duck, s2, s2DomainUrl, iconHorse, unavatar]
+  const sources = [pathNative, pathNativePng, s2DomainUrl, native, nativePng, duck, s2, iconHorse, unavatar]
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index);
   return { host, sources };
+}
+
+function getPreferredIconDisplaySource(iconData) {
+  const iconHost = sanitizeIconHost(iconData?.host || "");
+  const cachedSource = iconHost ? normalizeIconSource(iconSourceCache[iconHost] || "") : "";
+  if (cachedSource) {
+    return cachedSource;
+  }
+
+  const iconSources = Array.isArray(iconData?.sources)
+    ? iconData.sources
+        .map((item) => normalizeIconSource(item))
+        .filter(Boolean)
+    : [];
+  return iconSources[0] || "";
+}
+
+function getIconPathBase(pathname) {
+  if (typeof pathname !== "string") {
+    return "";
+  }
+  const trimmed = pathname.trim();
+  if (!trimmed || trimmed === "/") {
+    return "";
+  }
+  if (trimmed.endsWith("/")) {
+    return trimmed;
+  }
+  const lastSlashIndex = trimmed.lastIndexOf("/");
+  if (lastSlashIndex <= 0) {
+    return "";
+  }
+  return trimmed.slice(0, lastSlashIndex + 1);
 }
 
 function buildIconMarkup(iconUrl, _fallback, className = "engine-button-icon") {
@@ -2512,12 +2555,17 @@ function buildIconMarkup(iconUrl, _fallback, className = "engine-button-icon") {
       : iconUrl
         ? [iconUrl]
         : [];
-  const hasSources = iconSources.length > 0;
-  const firstSource = hasSources ? normalizeIconSource(iconSources[0]) : "";
   const cachedSource = iconHost ? normalizeIconSource(iconSourceCache[iconHost] || "") : "";
-  const readyClass = cachedSource && firstSource && cachedSource === firstSource ? " is-ready" : "";
-  const imageMarkup = hasSources
-    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(firstSource || iconSources[0])}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(iconSources.slice(1).join("|"))}" alt="" loading="eager" fetchpriority="low" decoding="async" onload="window.__mxIconLoaded(this);" onerror="window.__mxIconFallback(this);" />`
+  const normalizedSources = iconSources
+    .map((item) => normalizeIconSource(item))
+    .filter(Boolean)
+    .filter((item, index, array) => array.indexOf(item) === index);
+  const fallbackSources = normalizedSources.filter((item) => item !== cachedSource);
+  const displaySource = cachedSource || fallbackSources[0] || "";
+  const chainSources = cachedSource ? fallbackSources : fallbackSources.slice(1);
+  const readyClass = cachedSource ? " is-ready" : "";
+  const imageMarkup = displaySource
+    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(displaySource)}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(chainSources.join("|"))}" alt="" loading="eager" fetchpriority="low" decoding="async" onload="window.__mxIconLoaded(this);" onerror="window.__mxIconFallback(this);" />`
     : `<img class="mx-icon-image is-ready" src="${DEFAULT_ICON_DATA_URL}" alt="" loading="eager" fetchpriority="low" decoding="async" />`;
 
   return `
@@ -2550,6 +2598,7 @@ window.__mxIconLoaded = function handleIconLoaded(imageNode) {
   iconSourceCache[host] = source;
   persistIconSourceCache(iconSourceCache);
   syncIconNodesByHost(host, source, imageNode);
+  queuePromoteIconHost(host);
 };
 
 window.__mxIconFallback = function handleIconFallback(imageNode) {
@@ -2640,9 +2689,19 @@ function loadIconSourceCache() {
     }
 
     const entries = Object.entries(parsed)
-      .filter(([host, source]) => sanitizeIconHost(host) && typeof source === "string" && source.trim())
+      .filter(
+        ([host, source]) =>
+          sanitizeIconHost(host) &&
+          typeof source === "string" &&
+          source.trim() &&
+          isProbablyValidIconDataUrl(source.trim())
+      )
       .slice(0, ICON_CACHE_MAX_ENTRIES);
-    return Object.fromEntries(entries);
+    const normalized = Object.fromEntries(entries);
+    if (JSON.stringify(parsed) !== JSON.stringify(normalized)) {
+      window.localStorage.setItem(ICON_CACHE_STORAGE_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return {};
   }
@@ -2651,7 +2710,13 @@ function loadIconSourceCache() {
 function persistIconSourceCache(cache) {
   try {
     const trimmedEntries = Object.entries(cache)
-      .filter(([host, source]) => sanitizeIconHost(host) && typeof source === "string" && source.trim())
+      .filter(
+        ([host, source]) =>
+          sanitizeIconHost(host) &&
+          typeof source === "string" &&
+          source.trim() &&
+          isProbablyValidIconDataUrl(source.trim())
+      )
       .slice(-ICON_CACHE_MAX_ENTRIES);
     const normalized = Object.fromEntries(trimmedEntries);
     window.localStorage.setItem(ICON_CACHE_STORAGE_KEY, JSON.stringify(normalized));
@@ -2661,8 +2726,233 @@ function persistIconSourceCache(cache) {
   }
 }
 
+async function hydrateServerIconCacheForState(state) {
+  if (!authState.loggedIn || !state) {
+    return;
+  }
+
+  const missingHosts = collectRelevantIconHosts(state).filter(
+    (host) => !normalizeIconSource(iconSourceCache[host] || "")
+  );
+  if (!missingHosts.length) {
+    return;
+  }
+
+  try {
+    const payload = await fetchJson("/api/icon-cache/default/query", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ hosts: missingHosts }),
+    });
+    serverDefaultIconCache = {
+      ...serverDefaultIconCache,
+      ...(payload?.iconCache && typeof payload.iconCache === "object" ? payload.iconCache : {}),
+    };
+    const mergedHosts = mergeIconSourceCacheEntries(payload?.iconCache, { preferExisting: true });
+    if (mergedHosts.length) {
+      refreshResolvedIconHosts(mergedHosts);
+    }
+  } catch (error) {
+    console.warn("server icon cache query failed", error);
+  }
+}
+
+function mergeIconSourceCacheEntries(entries, options = {}) {
+  if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+    return [];
+  }
+
+  const preferExisting = options.preferExisting !== false;
+  const nextCache = { ...iconSourceCache };
+  const updatedHosts = [];
+
+  Object.entries(entries).forEach(([rawHost, rawSource]) => {
+    const host = sanitizeIconHost(rawHost);
+    const source = normalizeIconSource(rawSource);
+    if (!host || !source) {
+      return;
+    }
+
+    const currentSource = normalizeIconSource(nextCache[host] || "");
+    if (preferExisting && currentSource) {
+      return;
+    }
+    if (currentSource === source) {
+      return;
+    }
+
+    nextCache[host] = source;
+    updatedHosts.push(host);
+  });
+
+  if (updatedHosts.length) {
+    persistIconSourceCache(nextCache);
+  }
+
+  return updatedHosts;
+}
+
+function collectRelevantIconHosts(state = appState) {
+  if (!state) {
+    return [];
+  }
+
+  const hosts = [];
+  (state.engines || []).forEach((engine) => {
+    const host = getHostFromTemplate(engine.urlTemplate || "");
+    if (host) {
+      hosts.push(host);
+    }
+  });
+  (state.categories || []).forEach((category) => {
+    (category.links || []).forEach((link) => {
+      const url = parseUrlWithFallback(link.url);
+      const host = sanitizeIconHost(url?.host?.replace(/^www\./, "") || "");
+      if (host) {
+        hosts.push(host);
+      }
+    });
+  });
+
+  return hosts.filter((host, index, array) => array.indexOf(host) === index);
+}
+
+function refreshResolvedIconHosts(hosts) {
+  const safeHosts = Array.isArray(hosts)
+    ? hosts.map((host) => sanitizeIconHost(host)).filter(Boolean)
+    : [];
+  if (!safeHosts.length) {
+    return;
+  }
+
+  safeHosts.forEach((host) => {
+    const source = normalizeIconSource(iconSourceCache[host] || "");
+    if (source) {
+      syncIconNodesByHost(host, source);
+    }
+  });
+
+  if (appState) {
+    renderActiveEngineButton();
+    primeEngineButtonIcons();
+  }
+}
+
+function queuePromoteRelevantIconCacheEntries(state = appState) {
+  if (!authState.loggedIn || !state) {
+    return;
+  }
+
+  collectRelevantIconHosts(state).forEach((host) => {
+    const source = normalizeIconSource(iconSourceCache[host] || "");
+    if (source) {
+      pendingIconPromoteHosts.add(host);
+    }
+  });
+
+  scheduleIconCachePromoteFlush();
+}
+
+function queuePromoteIconHost(host) {
+  const safeHost = sanitizeIconHost(host);
+  if (!safeHost || !authState.loggedIn || !appState) {
+    return;
+  }
+  if (!collectRelevantIconHosts(appState).includes(safeHost)) {
+    return;
+  }
+
+  pendingIconPromoteHosts.add(safeHost);
+  scheduleIconCachePromoteFlush();
+}
+
+function scheduleIconCachePromoteFlush() {
+  if (iconCachePromoteTimer) {
+    window.clearTimeout(iconCachePromoteTimer);
+  }
+  iconCachePromoteTimer = window.setTimeout(() => {
+    iconCachePromoteTimer = 0;
+    void flushPromoteRelevantIconCacheEntries();
+  }, ICON_CACHE_SERVER_PROMOTE_DEBOUNCE_MS);
+}
+
+async function flushPromoteRelevantIconCacheEntries() {
+  if (!authState.loggedIn || !appState || !pendingIconPromoteHosts.size) {
+    return;
+  }
+
+  const relevantHosts = new Set(collectRelevantIconHosts(appState));
+  const entries = {};
+  const hosts = Array.from(pendingIconPromoteHosts);
+  pendingIconPromoteHosts.clear();
+
+  hosts.forEach((host) => {
+    if (!relevantHosts.has(host)) {
+      return;
+    }
+    const source = normalizeIconSource(iconSourceCache[host] || "");
+    if (!source) {
+      return;
+    }
+    entries[host] = source;
+  });
+
+  if (!Object.keys(entries).length) {
+    return;
+  }
+
+  try {
+    const payload = await fetchJson("/api/icon-cache/default/promote", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ entries }),
+    });
+    serverDefaultIconCache = {
+      ...serverDefaultIconCache,
+      ...(payload?.iconCache && typeof payload.iconCache === "object" ? payload.iconCache : {}),
+    };
+    const mergedHosts = mergeIconSourceCacheEntries(payload?.iconCache, { preferExisting: false });
+    if (mergedHosts.length) {
+      refreshResolvedIconHosts(mergedHosts);
+    }
+  } catch (error) {
+    console.warn("server icon cache promote failed", error);
+  }
+}
+
 function sanitizeIconHost(value) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isProbablyValidIconDataUrl(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("data:image/")) {
+    return true;
+  }
+
+  const commaIndex = trimmed.indexOf(",");
+  if (commaIndex === -1) {
+    return false;
+  }
+
+  try {
+    const preview = window.atob(trimmed.slice(commaIndex + 1).slice(0, 128));
+    const normalized = preview.trimStart().toLowerCase();
+    if (normalized.startsWith("<!doctype html") || normalized.startsWith("<html")) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeIconSource(value) {
@@ -2671,6 +2961,9 @@ function normalizeIconSource(value) {
   }
   const trimmed = value.trim();
   if (!trimmed) {
+    return "";
+  }
+  if (!isProbablyValidIconDataUrl(trimmed)) {
     return "";
   }
   try {

@@ -15,6 +15,9 @@ const BING_HOST = "https://cn.bing.com";
 const BING_RECENT_MIN = 1;
 const BING_RECENT_MAX = 8;
 const BING_RECENT_DEFAULT = 8;
+const ICON_CACHE_MAX_ENTRIES = 300;
+const ICON_CACHE_FETCH_LIMIT = 120;
+const ICON_CACHE_ENTRY_MAX_BYTES = 512 * 1024;
 
 const defaultState = {
   settings: {
@@ -185,7 +188,6 @@ app.post("/api/auth/register", (req, res) => {
 
   const passwordBundle = hashPassword(password);
   const now = new Date().toISOString();
-  const firstUser = userCount === 0;
   const insert = db.prepare(
     `
       INSERT INTO users (
@@ -208,7 +210,7 @@ app.post("/api/auth/register", (req, res) => {
   );
 
   const userId = Number(insert.lastInsertRowid);
-  ensureUserState(userId, firstUser ? readLegacyStateSeed() : null);
+  ensureUserState(userId, readDefaultStateSeed());
   const sessionToken = createSession(userId);
   setSessionCookie(res, req, sessionToken);
 
@@ -295,6 +297,29 @@ app.put("/api/state", requireAuth, (req, res) => {
   res.json(nextRecord);
 });
 
+app.post("/api/icon-cache/default/query", requireAuth, (req, res) => {
+  const hosts = sanitizeIconHostList(req.body?.hosts);
+  res.json({
+    iconCache: readDefaultIconCache(hosts),
+  });
+});
+
+app.post("/api/icon-cache/default/promote", requireAuth, async (req, res) => {
+  const entries = sanitizeIconCachePromoteEntries(req.body?.entries);
+  if (!entries.length) {
+    res.json({ ok: true, iconCache: {} });
+    return;
+  }
+
+  try {
+    const iconCache = await promoteDefaultIconCacheEntries(entries);
+    res.json({ ok: true, iconCache });
+  } catch (error) {
+    console.error("default icon cache promote failed", error);
+    res.status(502).json({ message: "图标缓存同步失败" });
+  }
+});
+
 app.post("/api/history", requireAuth, (req, res) => {
   const query = sanitizeText(req.body?.query, "").slice(0, 120);
   const engineId = sanitizeText(req.body?.engineId, "");
@@ -377,6 +402,14 @@ function ensureDatabaseSchema() {
       data TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS app_icon_cache (
+      host TEXT PRIMARY KEY,
+      data_url TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     )
   `).run();
 
@@ -594,10 +627,10 @@ function readCookie(cookieHeader, cookieName) {
   return "";
 }
 
-function readLegacyStateSeed() {
+function readDefaultStateSeed() {
   const row = db.prepare("SELECT data FROM app_state WHERE id = 1").get();
   if (!row?.data) {
-    return null;
+    return structuredClone(defaultState);
   }
   const parsed = safelyParse(row.data);
   return sanitizeState(parsed, defaultState);
@@ -609,7 +642,7 @@ function ensureUserState(userId, seedState = null) {
     return;
   }
 
-  const seed = sanitizeState(seedState || structuredClone(defaultState), defaultState);
+  const seed = sanitizeState(seedState || readDefaultStateSeed(), defaultState);
   const now = new Date().toISOString();
   db.prepare(
     `
@@ -648,6 +681,93 @@ function getStateRecord(userId) {
     state,
     updatedAt: row?.updated_at || new Date().toISOString(),
   };
+}
+
+function readDefaultIconCache(hosts = []) {
+  const safeHosts = sanitizeIconHostList(hosts);
+  const rows = safeHosts.length
+    ? db
+        .prepare(
+          `SELECT host, data_url FROM app_icon_cache WHERE host IN (${safeHosts
+            .map(() => "?")
+            .join(", ")})`
+        )
+        .all(...safeHosts)
+    : db
+        .prepare(
+          `
+            SELECT host, data_url
+            FROM app_icon_cache
+            ORDER BY updated_at DESC
+            LIMIT ?
+          `
+        )
+        .all(ICON_CACHE_MAX_ENTRIES);
+
+  return Object.fromEntries(
+    rows
+      .map((row) => [sanitizeIconHost(row.host), sanitizeDataUrl(row.data_url)])
+      .filter(([host, dataUrl]) => host && dataUrl)
+  );
+}
+
+async function promoteDefaultIconCacheEntries(entries) {
+  const incoming = Array.isArray(entries) ? entries.slice(0, ICON_CACHE_FETCH_LIMIT) : [];
+  const requestedHosts = incoming
+    .map((entry) => sanitizeIconHost(entry.host))
+    .filter(Boolean);
+  const existingCache = readDefaultIconCache(requestedHosts);
+  const nextEntries = [];
+
+  for (const entry of incoming) {
+    const host = sanitizeIconHost(entry.host);
+    const source = sanitizeIconSourceValue(entry.source);
+    if (!host || !source || existingCache[host]) {
+      continue;
+    }
+
+    try {
+      const dataUrl = source.startsWith("data:")
+        ? sanitizeDataUrl(source)
+        : await fetchRemoteIconAsDataUrl(source);
+      if (!dataUrl) {
+        continue;
+      }
+
+      nextEntries.push({
+        host,
+        dataUrl,
+      });
+      existingCache[host] = dataUrl;
+    } catch (error) {
+      console.warn(`icon promote skipped for ${host}:`, error?.message || error);
+    }
+  }
+
+  if (nextEntries.length) {
+    const now = new Date().toISOString();
+    const statement = db.prepare(
+      `
+        INSERT INTO app_icon_cache (host, data_url, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(host) DO UPDATE SET
+          data_url = excluded.data_url,
+          updated_at = excluded.updated_at
+      `
+    );
+    const transaction = db.transaction((items) => {
+      items.forEach((item) => {
+        statement.run(item.host, item.dataUrl, now);
+      });
+    });
+    transaction(nextEntries);
+  }
+
+  return Object.fromEntries(
+    requestedHosts
+      .map((host) => [host, existingCache[host] || ""])
+      .filter(([, dataUrl]) => dataUrl)
+  );
 }
 
 function mutateState(userId, updater) {
@@ -949,6 +1069,210 @@ function sanitizeHistory(input, engines, selectedEngineId) {
 
 function sanitizeText(value, fallback) {
   return typeof value === "string" ? value.trim() : fallback;
+}
+
+function sanitizeIconHost(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function sanitizeIconHostList(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => sanitizeIconHost(item))
+    .filter(Boolean)
+    .slice(0, ICON_CACHE_FETCH_LIMIT)
+    .filter((item, index, array) => array.indexOf(item) === index);
+}
+
+function sanitizeIconSourceValue(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.startsWith("data:")) {
+    return sanitizeDataUrl(trimmed);
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return "";
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function sanitizeIconCachePromoteEntries(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+
+  return Object.entries(value)
+    .map(([host, source]) => ({
+      host: sanitizeIconHost(host),
+      source: sanitizeIconSourceValue(source),
+    }))
+    .filter((entry) => entry.host && entry.source)
+    .slice(0, ICON_CACHE_FETCH_LIMIT);
+}
+
+function sanitizeDataUrl(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const trimmed = value.trim();
+  if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(trimmed)) {
+    return "";
+  }
+  if (trimmed.length > ICON_CACHE_ENTRY_MAX_BYTES * 2) {
+    return "";
+  }
+
+  return isProbablyValidImageDataUrl(trimmed) ? trimmed : "";
+}
+
+async function fetchRemoteIconAsDataUrl(sourceUrl) {
+  const response = await fetch(sourceUrl, {
+    headers: {
+      "User-Agent": "mx-search/1.0",
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(15000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`icon fetch failed: ${response.status}`);
+  }
+
+  const mimeType = normalizeIconMimeType(response.headers.get("content-type"), sourceUrl);
+  if (!mimeType) {
+    throw new Error("icon content-type is not supported");
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (!buffer.length || buffer.length > ICON_CACHE_ENTRY_MAX_BYTES) {
+    throw new Error("icon payload size is invalid");
+  }
+  if (!isProbablyValidImageBuffer(buffer, mimeType)) {
+    throw new Error("icon payload content is invalid");
+  }
+
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+function isProbablyValidImageDataUrl(dataUrl) {
+  const commaIndex = dataUrl.indexOf(",");
+  if (commaIndex === -1) {
+    return false;
+  }
+
+  try {
+    const buffer = Buffer.from(dataUrl.slice(commaIndex + 1), "base64");
+    if (!buffer.length) {
+      return false;
+    }
+
+    const mimeMatch = dataUrl.match(/^data:([^;]+);base64,/i);
+    const mimeType = mimeMatch?.[1]?.toLowerCase() || "";
+    return isProbablyValidImageBuffer(buffer, mimeType);
+  } catch {
+    return false;
+  }
+}
+
+function isProbablyValidImageBuffer(buffer, mimeType = "") {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    return false;
+  }
+
+  const prefix = buffer.subarray(0, 64).toString("utf8").trimStart().toLowerCase();
+  if (prefix.startsWith("<!doctype html") || prefix.startsWith("<html")) {
+    return false;
+  }
+
+  if (mimeType === "image/svg+xml") {
+    return prefix.startsWith("<svg") || prefix.startsWith("<?xml") || prefix.includes("<svg");
+  }
+
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47];
+  if (pngSignature.every((value, index) => buffer[index] === value)) {
+    return true;
+  }
+
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return true;
+  }
+
+  if (buffer.subarray(0, 4).toString("ascii") === "GIF8") {
+    return true;
+  }
+
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return true;
+  }
+
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x00 &&
+    buffer[1] === 0x00 &&
+    (buffer[2] === 0x01 || buffer[2] === 0x02) &&
+    buffer[3] === 0x00
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function normalizeIconMimeType(contentType, sourceUrl = "") {
+  const normalized = typeof contentType === "string" ? contentType.split(";")[0].trim().toLowerCase() : "";
+  const allowed = new Set([
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
+    "image/svg+xml",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+  ]);
+
+  if (allowed.has(normalized)) {
+    return normalized === "image/vnd.microsoft.icon" ? "image/x-icon" : normalized;
+  }
+
+  const lowerUrl = typeof sourceUrl === "string" ? sourceUrl.toLowerCase() : "";
+  if (lowerUrl.endsWith(".ico")) {
+    return "image/x-icon";
+  }
+  if (lowerUrl.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lowerUrl.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+  if (lowerUrl.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (lowerUrl.endsWith(".jpg") || lowerUrl.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+
+  return "";
 }
 
 function sanitizeOpacity(value, fallback = 100) {

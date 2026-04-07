@@ -357,3 +357,13 @@
   - Kept the custom seed input row behavior for non-preset seed values.
 - Files:
   - `public/app.js`
+
+- 2026-04-06: favicon source priority updated so page-level icons are tried before root-level favicons; added path-level favicon support and full-page Google s2 fallback to fix sites like matrix.tencent.com/ai-detect and aliyun.com.
+
+- 2026-04-06: new user defaults now seed from app_state for every account, and the current synced user_state was promoted into app_state so future registrations inherit the cached icons, layout, and settings template.
+
+- 2026-04-06: added shared server-side icon seed cache with query/promote APIs, preseeded current default engines and tags into app_icon_cache as data URLs, merged server icon seeds into localStorage on login/load, and made icon rendering prefer resolved local cache to stop repeated engine-menu reload flicker.
+
+- 2026-04-07: fixed probabilistic icon reloads by rejecting HTML/error pages masquerading as image/x-icon in both server cache and localStorage cache, then reseeded previously poisoned hosts (douyin.com, chatglm.cn, qianwen.com, coze.com).
+
+- 2026-04-07: rounded the active search-engine icon inside the search button without changing the outer button geometry.

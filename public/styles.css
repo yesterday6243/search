@@ -392,6 +392,7 @@ button {
   height: 80%;
   object-fit: contain;
   transform: none;
+  border-radius: 12px;
 }
 
 .engine-button-icon-fallback,
