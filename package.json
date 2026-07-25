@@ -12,7 +12,8 @@
   "description": "Personal search homepage with synced settings, tags, and history.",
   "dependencies": {
     "better-sqlite3": "^12.8.0",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "pinyin-pro": "^3.28.2"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

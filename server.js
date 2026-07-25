@@ -7,6 +7,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const HOST = (typeof process.env.HOST === "string" && process.env.HOST.trim()) || "0.0.0.0";
 const HISTORY_LIMIT = 100;
 const USER_LIMIT = 50;
+const USER_BACKUP_LIMIT = 10;
 const PASSWORD_MIN_LENGTH = 8;
 const SESSION_COOKIE_NAME = "mx_search_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -678,7 +679,7 @@ function listUserBackups(userId) {
         FROM user_backups
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
-        LIMIT 3
+        LIMIT ${USER_BACKUP_LIMIT}
       `
     )
     .all(userId)
@@ -737,7 +738,7 @@ function createUserBackup(userId, inputState) {
           FROM user_backups
           WHERE user_id = ?
           ORDER BY created_at DESC, id DESC
-          LIMIT 3
+          LIMIT ${USER_BACKUP_LIMIT}
         )
     `
   ).run(userId, userId);
@@ -1137,6 +1138,7 @@ function sanitizeCategories(input, fallbackCategories = defaultState.categories)
       return {
         id: categoryId,
         name,
+        isPinned: Boolean(category?.isPinned),
         links,
       };
     })

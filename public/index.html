@@ -58,6 +58,17 @@
           <span class="sync-dot" aria-hidden="true"></span>
           <span>云端备份就绪</span>
         </button>
+        <div class="home-tag-search" id="homeTagSearch" aria-hidden="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13Zm0 1.8a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4Zm5.61 10.04 3.39 3.39-1.27 1.27-3.39-3.39 1.27-1.27Z" />
+          </svg>
+          <input id="homeTagSearchInput" type="search" placeholder="搜索我的标签" autocomplete="off" />
+        </div>
+        <button class="icon-button home-tag-search-button" id="homeTagSearchButton" type="button" aria-label="搜索我的标签" title="搜索我的标签">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13Zm0 1.8a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4Zm5.61 10.04 3.39 3.39-1.27 1.27-3.39-3.39 1.27-1.27Z" />
+          </svg>
+        </button>
         <button class="icon-button settings-toggle" id="openSettingsButton" type="button" aria-label="打开设置" title="设置">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.4 7.4 0 0 0-1.62-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.58.22-1.13.53-1.62.94l-2.39-.96a.5.5 0 0 0-.6.22L2.72 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.07.63-.07.94s.03.63.07.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.22.39.31.6.22l2.39-.96c.49.41 1.04.72 1.62.94l.36 2.54c.04.24.25.42.49.42h3.8c.24 0 .45-.18.49-.42l.36-2.54c.58-.22 1.13-.53 1.62-.94l2.39.96c.22.09.47 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z" />
@@ -124,6 +135,26 @@
     </main>
 
     <aside class="settings-drawer hidden" id="settingsDrawer" aria-hidden="true">
+      <nav class="settings-anchor-nav" id="settingsAnchorNav" aria-label="设置快速定位">
+        <div class="settings-anchor-nav-list">
+          <button class="settings-anchor-nav-button is-active" type="button" data-settings-anchor="basic">
+            <span>01</span>基础信息
+          </button>
+          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="background">
+            <span>02</span>背景图
+          </button>
+          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="engines">
+            <span>03</span>搜索引擎
+          </button>
+          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="history">
+            <span>04</span>搜索历史
+          </button>
+          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="categories">
+            <span>05</span>标签分类
+          </button>
+        </div>
+        <div class="settings-category-jump-list hidden" id="settingsCategoryJumpList" aria-label="分类快速定位"></div>
+      </nav>
       <div class="settings-header">
         <div class="settings-header-left">
           <p class="section-kicker">SETTINGS</p>
@@ -138,7 +169,7 @@
 
       <form class="settings-form" id="settingsForm">
         <div class="settings-scroll" id="settingsScroll">
-          <section class="settings-section" data-trail-section="基础信息">
+          <section class="settings-section" id="settingsBasicSection" data-trail-section="基础信息">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">01</span>
@@ -179,7 +210,7 @@
             </label>
           </section>
 
-          <section class="settings-section" data-trail-section="背景图">
+          <section class="settings-section" id="settingsBackgroundSection" data-trail-section="背景图">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">02</span>
@@ -235,7 +266,7 @@
             </label>
           </section>
 
-          <section class="settings-section" data-trail-section="搜索引擎">
+          <section class="settings-section" id="settingsEnginesSection" data-trail-section="搜索引擎">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">03</span>
@@ -248,23 +279,10 @@
             </div>
           </section>
 
-          <section class="settings-section" data-trail-section="标签分类" id="categorySection">
+          <section class="settings-section" id="settingsHistorySection" data-trail-section="搜索历史">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">04</span>
-                <h3>标签分类</h3>
-              </div>
-            </div>
-            <div class="editor-stack" id="categoryEditor"></div>
-            <div class="section-bottom-actions">
-              <button class="ghost-button" id="addCategoryButton" type="button">添加分类</button>
-            </div>
-          </section>
-
-          <section class="settings-section" data-trail-section="搜索历史">
-            <div class="settings-title-row">
-              <div class="settings-title-main">
-                <span class="settings-anchor-badge">05</span>
                 <h3>搜索历史</h3>
               </div>
               <span id="historyCountLabel">最近保留 100 条</span>
@@ -278,6 +296,19 @@
                 <p>搜索历史只保存在当前浏览器。修改这里会立即影响本机保留条数，不会上传后端。</p>
               </div>
               <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
+            </div>
+          </section>
+
+          <section class="settings-section" data-trail-section="标签分类" id="categorySection">
+            <div class="settings-title-row">
+              <div class="settings-title-main">
+                <span class="settings-anchor-badge">05</span>
+                <h3>标签分类</h3>
+              </div>
+            </div>
+            <div class="editor-stack" id="categoryEditor"></div>
+            <div class="section-bottom-actions">
+              <button class="ghost-button" id="addCategoryButton" type="button">添加分类</button>
             </div>
           </section>
         </div>
@@ -384,6 +415,7 @@
     <div class="drawer-scrim hidden" id="drawerScrim"></div>
     <div class="notice-toast hidden" id="noticeToast" aria-live="polite"></div>
 
+    <script src="/vendor/pinyin-pro.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

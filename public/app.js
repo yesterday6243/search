@@ -10,6 +10,9 @@ const activeEngineIcon = document.getElementById("activeEngineIcon");
 const siteTitleDisplay = document.getElementById("siteTitleDisplay");
 const tagBoard = document.getElementById("tagBoard");
 const syncStatus = document.getElementById("syncStatus");
+const homeTagSearch = document.getElementById("homeTagSearch");
+const homeTagSearchButton = document.getElementById("homeTagSearchButton");
+const homeTagSearchInput = document.getElementById("homeTagSearchInput");
 const syncModal = document.getElementById("syncModal");
 const closeSyncModalButton = document.getElementById("closeSyncModalButton");
 const syncModalMeta = document.getElementById("syncModalMeta");
@@ -29,6 +32,8 @@ const confirmModalConfirmButton = document.getElementById("confirmModalConfirmBu
 const settingsDrawer = document.getElementById("settingsDrawer");
 const settingsTrail = document.getElementById("settingsTrail");
 const settingsScroll = document.getElementById("settingsScroll");
+const settingsAnchorNav = document.getElementById("settingsAnchorNav");
+const settingsCategoryJumpList = document.getElementById("settingsCategoryJumpList");
 const settingsQuickScroll = document.getElementById("settingsQuickScroll");
 const settingsQuickThumb = document.getElementById("settingsQuickThumb");
 const drawerScrim = document.getElementById("drawerScrim");
@@ -163,6 +168,8 @@ const categoryDragState = {
 
 let appState = null;
 let settingsDraft = null;
+let homeTagSearchQuery = "";
+const tagSearchTermsCache = new Map();
 let syncModalBusy = false;
 let syncModalBackups = [];
 let settingsTrailFrame = 0;
@@ -170,6 +177,7 @@ let settingsQuickScrollFrame = 0;
 let tagViewportFadeFrame = 0;
 let tagLabelFitFrame = 0;
 let tagOverflowLayoutFrame = 0;
+let iconReadyStateFrame = 0;
 let backgroundIntervalTimer = 0;
 let backgroundDelayTimer = 0;
 const persistedBackgroundSnapshot = loadPersistedBackgroundSnapshot();
@@ -220,10 +228,8 @@ async function boot() {
     if (cachedStatePayload?.username && cachedStatePayload.username !== authState.username) {
       clearPersistedStateSnapshot();
       applyGuestState();
-      await hydrateStateFromServerOnce({ silent: true });
-    } else if (!cachedStatePayload?.username) {
-      await hydrateStateFromServerOnce({ silent: true });
     }
+    await hydratePreferredUserStateOnce({ silent: true });
   } else {
     clearPersistedStateSnapshot();
     applyGuestState();
@@ -347,6 +353,9 @@ function bindEvents() {
   settingsForm.addEventListener("input", handleSettingsInput);
   settingsForm.addEventListener("click", handleSettingsClick);
   settingsScroll.addEventListener("scroll", handleSettingsScroll, { passive: true });
+  settingsAnchorNav?.addEventListener("click", handleSettingsAnchorNavigation);
+  homeTagSearchButton?.addEventListener("click", toggleHomeTagSearch);
+  homeTagSearchInput?.addEventListener("input", handleHomeTagSearchInput);
   settingsQuickScroll?.addEventListener("pointerdown", handleSettingsQuickTrackPointerDown);
   settingsQuickThumb?.addEventListener("pointerdown", handleSettingsQuickThumbPointerDown);
   window.addEventListener("pointermove", handleSettingsQuickThumbPointerMove);
@@ -543,6 +552,30 @@ async function hydrateStateFromServerOnce(options = {}) {
   }
 }
 
+async function hydratePreferredUserStateOnce(options = {}) {
+  if (!authState.loggedIn) {
+    return false;
+  }
+
+  try {
+    const backupListPayload = await fetchJson("/api/backups");
+    syncModalBackups = Array.isArray(backupListPayload?.backups) ? backupListPayload.backups : [];
+    const latestBackupId = syncModalBackups[0]?.id;
+    if (latestBackupId) {
+      const backupPayload = await fetchJson(`/api/backups/${encodeURIComponent(latestBackupId)}`);
+      applyState(backupPayload, { persistLocalCache: true });
+      return true;
+    }
+  } catch (error) {
+    console.error(error);
+    if (options.silent !== true) {
+      showNotice("云端备份读取失败，已回退到账号布局", "error");
+    }
+  }
+
+  return hydrateStateFromServerOnce(options);
+}
+
 async function handleOpenSettingsClick() {
   if (authState.loggedIn) {
     openSettings();
@@ -570,7 +603,7 @@ async function handleLoginSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
-    await hydrateStateFromServerOnce();
+    await hydratePreferredUserStateOnce();
     closeAuthModal();
     renderSyncStatus();
     showNotice(`欢迎回来，${authState.username}`, "success");
@@ -616,7 +649,7 @@ async function handleRegisterSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
-    await hydrateStateFromServerOnce();
+    await hydratePreferredUserStateOnce();
     closeAuthModal();
     renderSyncStatus();
     showNotice(`注册成功，欢迎 ${authState.username}`, "success");
@@ -1045,6 +1078,7 @@ function applyState(payload, options = {}) {
 
   appState = nextState;
   trimExpandedCategoryState();
+  appState.categories.filter((category) => category.isPinned).forEach((category) => expandedCategoryIds.add(category.id));
 
   const placeholder = normalizePlaceholder(appState.settings.subtitle);
   const searchBarHeight = normalizeSearchBarHeight(appState.settings.searchBarHeight);
@@ -1077,6 +1111,7 @@ function applyState(payload, options = {}) {
   renderEngineMenu();
   primeEngineButtonIcons();
   queueTagViewportFadeUpdate();
+  queueIconReadyStateCheck();
 
   if (persistLocalCache && authState.loggedIn) {
     persistStateSnapshot({
@@ -1123,6 +1158,7 @@ function renderActiveEngineButton() {
 
   engineToggleButton.title = `当前搜索引擎：${activeEngine.name}`;
   engineToggleButton.setAttribute("aria-label", `切换搜索引擎，当前为 ${activeEngine.name}`);
+  queueIconReadyStateCheck();
 }
 
 function primeEngineButtonIcons() {
@@ -1156,12 +1192,26 @@ function renderTagBoard() {
     return;
   }
 
-  tagBoard.innerHTML = appState.categories
-    .map((category) => {
-      const isExpanded = expandedCategoryIds.has(category.id);
-      const content = category.links.length
+  const query = homeTagSearchQuery;
+  const visibleCategories = appState.categories
+    .map((category) => ({
+      category,
+      links: query ? category.links.filter((link) => matchesTagSearch(link.label, query)) : category.links,
+    }))
+    .filter(({ links }) => !query || links.length);
+
+  if (!visibleCategories.length) {
+    tagBoard.innerHTML = '<div class="empty-state">没有匹配的自定义标签。</div>';
+    ensureCategoryDropIndicator();
+    return;
+  }
+
+  tagBoard.innerHTML = visibleCategories
+    .map(({ category, links }) => {
+      const isExpanded = expandedCategoryIds.has(category.id) || Boolean(query);
+      const content = links.length
         ? `<div class="tag-grid">
-            ${category.links
+            ${links
               .map((link) => {
                 const iconUrl = getFaviconUrl(link.url);
                 return `
@@ -1185,9 +1235,10 @@ function renderTagBoard() {
         : '<div class="empty-state">这个分类还没有标签，去设置里添加吧。</div>';
       const tail = `
           <button
-            class="category-expand-btn ${isExpanded ? "is-expanded" : ""}"
+            class="category-expand-btn ${isExpanded ? "is-expanded" : ""} ${query ? "is-search-filtering" : ""}"
             type="button"
             data-toggle-category="${escapeAttribute(category.id)}"
+            ${query ? "disabled" : ""}
             aria-expanded="${isExpanded ? "true" : "false"}"
             aria-label="${isExpanded ? "收起分类标签" : "展开更多标签"}"
             title="${isExpanded ? "收起分类标签" : "展开更多标签"}"
@@ -1228,6 +1279,7 @@ function renderTagBoard() {
   queueTagOverflowLayoutUpdate();
   queueTagLabelFit();
   queueTagViewportFadeUpdate();
+  queueIconReadyStateCheck();
 }
 
 function renderHistoryList(keyword = "") {
@@ -1297,6 +1349,7 @@ function renderEngineMenu() {
       `;
     })
     .join("");
+  queueIconReadyStateCheck();
 }
 
 function renderBackgroundFieldVisibility(background) {
@@ -1578,9 +1631,9 @@ function renderSettingsDrawer() {
   categoryEditor.innerHTML = settingsDraft.categories
     .map(
       (category) => `
-        <article class="editor-card" data-category-card="${escapeAttribute(category.id)}">
+        <article class="editor-card category-editor-card" data-category-card="${escapeAttribute(category.id)}">
           <div class="editor-card-header">
-            <h4>${escapeHtml(category.name || "未命名分类")}</h4>
+            <h4 class="category-editor-card-title">${escapeHtml(category.name || "未命名分类")}</h4>
             <button class="ghost-button danger" type="button" data-remove-category="${escapeAttribute(category.id)}">删除分类</button>
           </div>
           <label class="field">
@@ -1618,6 +1671,7 @@ function renderSettingsDrawer() {
     )
     .join("");
 
+  renderSettingsAnchorNav();
   queueSettingsTrailUpdate();
   queueSettingsQuickScrollUpdate();
 }
@@ -1743,6 +1797,7 @@ function handleSettingsInput(event) {
         if (heading) {
           heading.textContent = target.value || "未命名分类";
         }
+        renderSettingsAnchorNav();
       }
     }
     queueSettingsTrailUpdate();
@@ -1784,15 +1839,7 @@ function handleSettingsClick(event) {
 
   const addLinkCategoryId = event.target.dataset.addLink;
   if (addLinkCategoryId) {
-    const category = settingsDraft.categories.find((item) => item.id === addLinkCategoryId);
-    if (category) {
-      category.links.push({
-        id: createId("link"),
-        label: "新标签",
-        url: "https://",
-      });
-      renderSettingsDrawer();
-    }
+    addLinkToCategoryDraft(addLinkCategoryId, { focusAddedLink: false });
     return;
   }
 
@@ -1804,6 +1851,34 @@ function handleSettingsClick(event) {
       renderSettingsDrawer();
     }
   }
+}
+
+function addLinkToCategoryDraft(categoryId, { focusAddedLink = false } = {}) {
+  const category = settingsDraft?.categories.find((item) => item.id === categoryId);
+  if (!category) {
+    return;
+  }
+
+  const linkId = createId("link");
+  category.links.push({
+    id: linkId,
+    label: "新标签",
+    url: "https://",
+  });
+  renderSettingsDrawer();
+
+  if (!focusAddedLink) {
+    return;
+  }
+
+  window.requestAnimationFrame(() => {
+    scrollSettingsToCategoryBottom(categoryId);
+    const labelInput = categoryEditor?.querySelector(
+      `[data-link-field="label"][data-link-id="${CSS.escape(linkId)}"]`
+    );
+    labelInput?.focus();
+    labelInput?.select();
+  });
 }
 
 function addEngineDraft() {
@@ -2405,6 +2480,39 @@ function queueTagOverflowLayoutUpdate() {
   });
 }
 
+function queueIconReadyStateCheck() {
+  if (iconReadyStateFrame) {
+    window.cancelAnimationFrame(iconReadyStateFrame);
+  }
+  iconReadyStateFrame = window.requestAnimationFrame(() => {
+    iconReadyStateFrame = 0;
+    reconcileIconReadyState();
+  });
+}
+
+function reconcileIconReadyState() {
+  document.querySelectorAll("img.mx-icon-image").forEach((node) => {
+    if (!(node instanceof HTMLImageElement) || !node.complete) {
+      return;
+    }
+
+    if (node.naturalWidth > 0) {
+      node.classList.add("is-ready");
+      if (node.dataset.iconHost) {
+        window.__mxIconLoaded(node);
+      }
+      return;
+    }
+
+    if (node.dataset.iconChain || node.dataset.iconHost) {
+      window.__mxIconFallback(node);
+      return;
+    }
+
+    node.classList.add("is-ready");
+  });
+}
+
 function getGridColumnCount(gridNode) {
   if (!(gridNode instanceof HTMLElement)) {
     return MAX_TAGS_PER_ROW;
@@ -2443,6 +2551,7 @@ function updateCategoryExpandButtonState(buttonNode, hasOverflow, isExpanded) {
 }
 
 function updateTagOverflowLayout() {
+  const isFilteringTags = Boolean(homeTagSearchQuery);
   const rows = tagBoard.querySelectorAll(".category-row");
   rows.forEach((rowNode) => {
     if (!(rowNode instanceof HTMLElement)) {
@@ -2453,6 +2562,20 @@ function updateTagOverflowLayout() {
     const gridNode = rowNode.querySelector(".tag-grid");
     const buttonNode = rowNode.querySelector("[data-toggle-category]");
     const linkCount = gridNode?.querySelectorAll(".tag-card").length || 0;
+
+    if (isFilteringTags) {
+      const filteredRowCount = Math.max(1, Math.ceil(linkCount / getGridColumnCount(gridNode)));
+      rowNode.style.setProperty("--category-rows", String(filteredRowCount));
+      rowNode.classList.add("is-expanded");
+      rowNode.classList.remove("has-overflow");
+      if (buttonNode instanceof HTMLButtonElement) {
+        buttonNode.disabled = true;
+        buttonNode.classList.add("is-search-filtering");
+        buttonNode.setAttribute("aria-hidden", "true");
+      }
+      return;
+    }
+
     const columns = getGridColumnCount(gridNode);
     const hasOverflow = linkCount > columns;
     const rowCount = Math.max(1, Math.ceil(linkCount / columns));
@@ -2468,6 +2591,47 @@ function updateTagOverflowLayout() {
 
     updateCategoryExpandButtonState(buttonNode, hasOverflow, isExpanded);
   });
+}
+
+function matchesTagSearch(label, query) {
+  if (!query) {
+    return true;
+  }
+
+  return getTagSearchTerms(label).some((term) => term.includes(query));
+}
+
+function getTagSearchTerms(label) {
+  const normalizedLabel = String(label || "").trim().toLocaleLowerCase();
+  if (!normalizedLabel) {
+    return [];
+  }
+
+  const cachedTerms = tagSearchTermsCache.get(normalizedLabel);
+  if (cachedTerms) {
+    return cachedTerms;
+  }
+
+  const terms = new Set([normalizedLabel]);
+  const convertToPinyin = window.pinyinPro?.pinyin;
+  if (typeof convertToPinyin === "function") {
+    const syllables = convertToPinyin(normalizedLabel, {
+      toneType: "none",
+      type: "array",
+      nonZh: "consecutive",
+    })
+      .map((value) => String(value || "").toLocaleLowerCase())
+      .filter(Boolean);
+
+    if (syllables.length) {
+      terms.add(syllables.join(""));
+      terms.add(syllables.map((value) => value[0] || "").join(""));
+    }
+  }
+
+  const resolvedTerms = Array.from(terms);
+  tagSearchTermsCache.set(normalizedLabel, resolvedTerms);
+  return resolvedTerms;
 }
 
 function fitTagLabelText() {
@@ -2591,6 +2755,134 @@ function updateSettingsTrail() {
   }
 
   settingsTrail.textContent = trailText;
+  updateSettingsAnchorNav(sectionName);
+}
+
+function renderSettingsAnchorNav() {
+  if (!settingsCategoryJumpList) {
+    return;
+  }
+
+  const categories = Array.isArray(settingsDraft?.categories) ? settingsDraft.categories : [];
+  settingsCategoryJumpList.innerHTML = categories
+    .map(
+      (category) => `
+        <div class="settings-category-jump-card">
+          <button class="settings-category-jump-name" type="button" data-settings-category-id="${escapeAttribute(category.id)}">
+          <span>${escapeHtml(category.name || "未命名分类")}</span>
+          </button>
+          <div class="settings-category-jump-actions">
+            <button class="settings-category-jump-action" type="button" data-add-link-from-nav="${escapeAttribute(category.id)}" aria-label="添加标签" title="添加标签">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" /></svg>
+            </button>
+            <button class="settings-category-jump-action ${category.isPinned ? "is-pinned" : ""}" type="button" data-toggle-category-pin="${escapeAttribute(category.id)}" aria-label="${category.isPinned ? "取消默认展开" : "设为默认展开"}" title="${category.isPinned ? "取消默认展开" : "设为默认展开"}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.6 3.5 5.9 5.9-2 2-1.3-1.3-3.2 3.2v4.2l-1.7 1.7-3.5-3.5-4.3 4.3-1.4-1.4 4.3-4.3-3.5-3.5 1.7-1.7h4.2L13 5.8l-1.3-1.3 2-2Z" /></svg>
+            </button>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function updateSettingsAnchorNav(sectionName) {
+  if (!settingsAnchorNav) {
+    return;
+  }
+
+  const anchorBySection = {
+    基础信息: "basic",
+    背景图: "background",
+    搜索引擎: "engines",
+    搜索历史: "history",
+    标签分类: "categories",
+  };
+  const activeAnchor = anchorBySection[sectionName] || "basic";
+  settingsAnchorNav.querySelectorAll("[data-settings-anchor]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.settingsAnchor === activeAnchor);
+  });
+  settingsCategoryJumpList?.classList.toggle("hidden", activeAnchor !== "categories");
+}
+
+function handleSettingsAnchorNavigation(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  const addLinkButton = target?.closest("[data-add-link-from-nav]");
+  const pinButton = target?.closest("[data-toggle-category-pin]");
+  const anchorButton = target?.closest("[data-settings-anchor]");
+  const categoryButton = target?.closest("[data-settings-category-id]");
+  let targetElement = null;
+
+  if (addLinkButton) {
+    addLinkToCategoryDraft(addLinkButton.dataset.addLinkFromNav, { focusAddedLink: true });
+    return;
+  }
+
+  if (pinButton) {
+    const category = settingsDraft?.categories.find((item) => item.id === pinButton.dataset.toggleCategoryPin);
+    if (category) {
+      category.isPinned = !category.isPinned;
+      renderSettingsDrawer();
+      updateSettingsAnchorNav("标签分类");
+    }
+    return;
+  }
+
+  if (anchorButton) {
+    const sectionByAnchor = {
+      basic: "settingsBasicSection",
+      background: "settingsBackgroundSection",
+      engines: "settingsEnginesSection",
+      history: "settingsHistorySection",
+      categories: "categorySection",
+    };
+    targetElement = document.getElementById(sectionByAnchor[anchorButton.dataset.settingsAnchor]);
+  } else if (categoryButton) {
+    targetElement = categoryEditor?.querySelector(
+      `[data-category-card="${CSS.escape(categoryButton.dataset.settingsCategoryId || "")}"]`
+    );
+  }
+
+  if (!(targetElement instanceof HTMLElement) || !settingsScroll) {
+    return;
+  }
+
+  const targetTop =
+    targetElement.getBoundingClientRect().top - settingsScroll.getBoundingClientRect().top + settingsScroll.scrollTop;
+  settingsScroll.scrollTop = Math.max(0, Math.round(targetTop));
+}
+
+function scrollSettingsToCategoryBottom(categoryId) {
+  const card = categoryEditor?.querySelector(`[data-category-card="${CSS.escape(categoryId)}"]`);
+  if (!(card instanceof HTMLElement) || !settingsScroll) {
+    return;
+  }
+
+  const cardTop = card.getBoundingClientRect().top - settingsScroll.getBoundingClientRect().top + settingsScroll.scrollTop;
+  settingsScroll.scrollTop = Math.max(0, Math.round(cardTop + card.offsetHeight - settingsScroll.clientHeight + 18));
+}
+
+function toggleHomeTagSearch() {
+  if (!homeTagSearch || !homeTagSearchInput) {
+    return;
+  }
+
+  const willOpen = !homeTagSearch.classList.contains("is-open");
+  homeTagSearch.classList.toggle("is-open", willOpen);
+  homeTagSearch.setAttribute("aria-hidden", willOpen ? "false" : "true");
+  homeTagSearchButton?.classList.toggle("is-active", willOpen);
+  if (willOpen) {
+    homeTagSearchInput.focus();
+    return;
+  }
+
+  homeTagSearchQuery = "";
+  homeTagSearchInput.value = "";
+  renderTagBoard();
+}
+
+function handleHomeTagSearchInput(event) {
+  homeTagSearchQuery = String(event.target?.value || "").trim().toLocaleLowerCase();
+  renderTagBoard();
 }
 
 function queueSettingsQuickScrollUpdate() {
