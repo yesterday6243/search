@@ -1093,12 +1093,6 @@ button {
   height: 16px;
 }
 
-.settings-category-jump-action:hover {
-  color: #162033;
-  border-color: rgba(236, 243, 255, 0.7);
-  background: rgba(236, 243, 255, 0.94);
-}
-
 .settings-category-jump-action.is-pinned {
   color: #17243a;
   border-color: rgba(232, 241, 255, 0.88);
