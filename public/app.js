@@ -56,7 +56,6 @@ const cancelSettingsButton = document.getElementById("cancelSettingsButton");
 const settingsForm = document.getElementById("settingsForm");
 const engineToggleButton = document.getElementById("engineToggleButton");
 const addEngineButton = document.getElementById("addEngineButton");
-const addCategoryButton = document.getElementById("addCategoryButton");
 const clearHistoryButton = document.getElementById("clearHistoryButton");
 const historyCountLabel = document.getElementById("historyCountLabel");
 const historyLimitInput = document.getElementById("historyLimitInput");
@@ -124,12 +123,19 @@ const ICON_CACHE_STORAGE_KEY = "mx_icon_source_cache_v1";
 const ICON_CACHE_MAX_ENTRIES = 300;
 const ICON_CACHE_SERVER_PROMOTE_DEBOUNCE_MS = 1200;
 const ICON_SOURCE_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
+const ICON_DISCOVER_STORAGE_KEY = "mx_icon_discover_v1";
+const ICON_DISCOVER_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
+// Runs after the icon promote round, which already turns working icons into cached data URLs.
+const ICON_DISCOVER_DELAY_MS = 8000;
+const ICON_DISCOVER_CONCURRENCY = 3;
+// Third-party favicon services answer unknown sites with a generic globe (HTTP 404 + image),
+// which still fires onload; such cached results are worth replacing with the page's own icon.
+const GENERIC_ICON_SERVICE_PATTERN = /google\.com\/s2\/favicons|icons\.duckduckgo\.com|icon\.horse|unavatar\.io/i;
 const NOTICE_HIDE_DELAY_MS = 2200;
 const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
 const TAG_FADE_START_DISTANCE = 34;
 const TAG_FADE_HIDDEN_OFFSET = 2;
-const TAG_VIEWPORT_FADE_MIN_WIDTH = 1221;
 const CATEGORY_DROP_EDGE_PADDING = 16;
 const CATEGORY_DROP_END_ZONE = 42;
 const CATEGORY_DROP_END_OFFSET = 14;
@@ -186,9 +192,37 @@ const GUEST_STATE = {
   history: [],
 };
 const expandedCategoryIds = new Set();
-const dragState = {
-  categoryId: "",
-  linkId: "",
+const TAG_DRAG_START_DISTANCE = 6;
+const TAG_DRAG_TOUCH_HOLD_MS = 320;
+const TAG_DRAG_TOUCH_SLOP = 10;
+const TAG_DRAG_AUTOSCROLL_EDGE = 72;
+const TAG_REFLOW_DURATION_MS = 340;
+const TAG_REFLOW_EASING = "cubic-bezier(0.2, 0.9, 0.25, 1.08)";
+const TAG_SETTLE_DURATION_MS = 260;
+const TAG_POP_DURATION_MS = 240;
+// Pointer must be this far inside a card (fraction of its size) before it swaps, to avoid edge jitter.
+const TAG_SWAP_INSET = 0.18;
+const tagPointerDrag = {
+  pointerId: null,
+  pointerType: "",
+  card: null,
+  ghost: null,
+  active: false,
+  settling: false,
+  holdTimer: 0,
+  frame: 0,
+  startX: 0,
+  startY: 0,
+  pointerX: 0,
+  pointerY: 0,
+  offsetX: 0,
+  offsetY: 0,
+  originParent: null,
+  originNext: null,
+  originCategoryId: "",
+  lastTargetCard: null,
+  scrollParent: null,
+  suppressClick: false,
 };
 const categoryDragState = {
   categoryId: "",
@@ -237,6 +271,10 @@ const engineRenderKeyCache = new Map();
 const bingBackgroundCacheByCount = new Map();
 let iconCachePromoteTimer = 0;
 const pendingIconPromoteHosts = new Set();
+let iconDiscoverTimer = 0;
+let iconDiscoverActiveCount = 0;
+const iconDiscoverQueue = [];
+const iconDiscoverPendingHosts = new Set();
 const iconSourceFailureCooldown = new Map();
 let noticeTimer = 0;
 let confirmResolver = null;
@@ -380,7 +418,6 @@ function bindEvents() {
     closeSettings();
   });
   addEngineButton.addEventListener("click", addEngineDraft);
-  addCategoryButton.addEventListener("click", addCategoryDraft);
   clearHistoryButton.addEventListener("click", clearHistory);
 
   settingsForm.addEventListener("submit", saveSettings);
@@ -453,6 +490,10 @@ function bindEvents() {
   tagBoard.addEventListener("dragover", handleTagDragOver);
   tagBoard.addEventListener("drop", handleTagDrop);
   tagBoard.addEventListener("dragend", handleTagDragEnd);
+  tagBoard.addEventListener("pointerdown", handleTagPointerDown);
+  tagBoard.addEventListener("click", handleTagDragClickGuard, true);
+  tagBoard.addEventListener("contextmenu", handleTagDragContextMenu);
+  tagBoard.addEventListener("touchmove", handleTagDragTouchMove, { passive: false });
 }
 
 function ensureCategoryDropIndicator() {
@@ -1169,6 +1210,7 @@ function applyState(payload, options = {}) {
     persistUiPrefsSnapshot(appState.settings);
   }
   renderSyncStatus();
+  scheduleIconDiscovery();
 }
 
 function normalizeBrandIconUrl(value) {
@@ -1303,7 +1345,7 @@ function renderTagBoard() {
                     target="_blank"
                     rel="noreferrer"
                     title="${escapeAttribute(link.label)}"
-                    draggable="true"
+                    draggable="false"
                     data-category-id="${escapeAttribute(category.id)}"
                     data-link-id="${escapeAttribute(link.id)}"
                   >
@@ -1730,46 +1772,101 @@ function renderSettingsDrawer() {
   }
   categoryEditor.innerHTML = settingsDraft.categories
     .filter((category) => category.id === activeSettingsCategoryId)
-    .map(
-      (category) => `
-        <article class="editor-card category-editor-card" data-category-card="${escapeAttribute(category.id)}">
-          <div class="editor-card-header">
-            <h4 class="category-editor-card-title">${escapeHtml(category.name || "未命名分类")}</h4>
-            <button class="ghost-button danger" type="button" data-remove-category="${escapeAttribute(category.id)}">删除分类</button>
+    .map((category) => {
+      const categoryId = escapeAttribute(category.id);
+      const linkRows = category.links
+        .map(
+          (link, index) => `
+            <div class="link-row" role="row" data-link-row="${escapeAttribute(link.id)}">
+              <span class="link-row-index" role="cell">${String(index + 1).padStart(2, "0")}</span>
+              <div class="link-row-name" role="cell">
+                ${buildIconMarkup(getFaviconUrl(link.url), link.label, "preview-icon link-row-icon")}
+                <input class="link-row-input" type="text" aria-label="标签名" placeholder="标签名" data-link-field="label" data-category-id="${categoryId}" data-link-id="${escapeAttribute(link.id)}" value="${escapeAttribute(link.label)}" maxlength="18" />
+              </div>
+              <div class="link-row-url" role="cell">
+                <input class="link-row-input" type="url" aria-label="网址" placeholder="https://" data-link-field="url" data-category-id="${categoryId}" data-link-id="${escapeAttribute(link.id)}" value="${escapeAttribute(link.url)}" />
+              </div>
+              <div class="link-row-actions" role="cell">
+                <a class="link-row-action" href="${escapeAttribute(link.url)}" target="_blank" rel="noopener noreferrer" data-link-open="${escapeAttribute(link.id)}" aria-label="在新标签页打开" title="在新标签页打开">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6h-2V7.41l-7.29 7.3-1.42-1.42L16.59 6H14V4ZM5 6h6v2H6v10h10v-5h2v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" /></svg>
+                </a>
+                <button class="link-row-action danger" type="button" data-remove-link="${escapeAttribute(link.id)}" data-category-id="${categoryId}" aria-label="删除标签" title="删除标签">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.8 11.1A2 2 0 0 1 15.2 22H8.8a2 2 0 0 1-2-1.9L6 9Zm4 2v8h2v-8h-2Zm4 0v8h2v-8h-2Z" /></svg>
+                </button>
+              </div>
+            </div>
+          `
+        )
+        .join("");
+      return `
+        <article class="category-editor-card" data-category-card="${categoryId}">
+          <div class="category-panel">
+            <div class="category-panel-head">
+              <div class="category-panel-title">
+                <h4 class="category-editor-card-title">${escapeHtml(category.name || "未命名分类")}</h4>
+                <span class="category-badge">${category.links.length} 个标签</span>
+              </div>
+              <button class="category-text-button danger" type="button" data-remove-category="${categoryId}">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.8 11.1A2 2 0 0 1 15.2 22H8.8a2 2 0 0 1-2-1.9L6 9Z" /></svg>
+                删除分类
+              </button>
+            </div>
+            <div class="category-panel-body">
+              <label class="field category-name-field">
+                <span>分类名称</span>
+                <input type="text" data-category-field="name" data-category-id="${categoryId}" value="${escapeAttribute(category.name)}" maxlength="18" />
+              </label>
+              <label class="category-switch">
+                <input type="checkbox" role="switch" data-category-pin="${categoryId}" ${category.isPinned ? "checked" : ""} />
+                <span class="category-switch-track" aria-hidden="true"></span>
+                <span class="category-switch-text">
+                  <strong>首页默认展开</strong>
+                  <small>打开主页时自动展开此分类</small>
+                </span>
+              </label>
+            </div>
           </div>
-          <label class="field">
-            <span>分类名称</span>
-            <input type="text" data-category-field="name" data-category-id="${escapeAttribute(category.id)}" value="${escapeAttribute(category.name)}" maxlength="18" />
-          </label>
-          <div class="link-list">
+
+          <div class="link-table" role="table" aria-label="${escapeAttribute(category.name || "未命名分类")} 的标签">
+            <div class="link-table-toolbar">
+              <div class="link-table-title">
+                <strong>标签列表</strong>
+                <span data-link-visible-count>${category.links.length}</span>
+              </div>
+              <div class="link-table-tools">
+                ${
+                  category.links.length > 1
+                    ? `<label class="link-table-search">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4a6.5 6.5 0 0 1 5.18 10.43l4.45 4.44-1.42 1.42-4.44-4.45A6.5 6.5 0 1 1 10.5 4Zm0 2a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9Z" /></svg>
+                        <input type="search" placeholder="筛选名称或网址" aria-label="筛选标签" data-link-filter="${categoryId}" />
+                      </label>`
+                    : ""
+                }
+                <button class="primary-button link-table-add" type="button" data-add-link="${categoryId}">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" /></svg>
+                  添加标签
+                </button>
+              </div>
+            </div>
             ${
               category.links.length
-                ? category.links
-                    .map(
-                      (link) => `
-                        <div class="link-item-grid">
-                          <label class="field">
-                            <span>标签名</span>
-                            <input type="text" data-link-field="label" data-category-id="${escapeAttribute(category.id)}" data-link-id="${escapeAttribute(link.id)}" value="${escapeAttribute(link.label)}" maxlength="18" />
-                          </label>
-                          <label class="field">
-                            <span>网址</span>
-                            <input type="url" data-link-field="url" data-category-id="${escapeAttribute(category.id)}" data-link-id="${escapeAttribute(link.id)}" value="${escapeAttribute(link.url)}" />
-                          </label>
-                          <button class="ghost-button danger" type="button" data-remove-link="${escapeAttribute(link.id)}" data-category-id="${escapeAttribute(category.id)}">删除</button>
-                        </div>
-                      `
-                    )
-                    .join("")
-                : '<div class="editor-tip">这个分类还没有标签，点击“添加标签”开始配置。</div>'
+                ? `<div class="link-table-head" role="row">
+                    <span role="columnheader">#</span>
+                    <span role="columnheader">名称</span>
+                    <span role="columnheader">网址</span>
+                    <span role="columnheader">操作</span>
+                  </div>
+                  <div class="link-list" role="rowgroup">${linkRows}</div>
+                  <div class="link-table-empty hidden" data-link-filter-empty>没有匹配的标签</div>`
+                : `<div class="link-table-empty">
+                    <strong>这个分类还没有标签</strong>
+                    <span>点击右上角“添加标签”，填写名称和网址即可显示在首页。</span>
+                  </div>`
             }
           </div>
-          <div class="editor-card-footer">
-            <button class="ghost-button" type="button" data-add-link="${escapeAttribute(category.id)}">添加标签</button>
-          </div>
         </article>
-      `
-    )
+      `;
+    })
     .join("");
 
   renderSettingsAnchorNav();
@@ -1918,15 +2015,76 @@ function handleSettingsInput(event) {
     return;
   }
 
+  if (target.dataset.categoryPin) {
+    const category = settingsDraft.categories.find((item) => item.id === target.dataset.categoryPin);
+    if (category) {
+      category.isPinned = target.checked;
+      renderSettingsAnchorNav();
+    }
+    return;
+  }
+
+  if (target.dataset.linkFilter !== undefined) {
+    filterCategoryLinkRows(target);
+    return;
+  }
+
   if (target.dataset.linkField) {
     const category = settingsDraft.categories.find((item) => item.id === target.dataset.categoryId);
     const link = category?.links.find((item) => item.id === target.dataset.linkId);
     if (link) {
       link[target.dataset.linkField] = target.value;
+      if (target.dataset.linkField === "url") {
+        const row = target.closest("[data-link-row]");
+        row?.querySelector("[data-link-open]")?.setAttribute("href", target.value);
+        queueSettingsLinkIconRefresh(row, target.value);
+      }
     }
   }
 
   queueSettingsTrailUpdate();
+}
+
+let settingsLinkIconTimer = 0;
+
+function queueSettingsLinkIconRefresh(row, rawUrl) {
+  window.clearTimeout(settingsLinkIconTimer);
+  settingsLinkIconTimer = window.setTimeout(() => {
+    const icon = row?.querySelector(".link-row-icon");
+    if (!icon?.isConnected || !parseUrlWithFallback(rawUrl)) {
+      return;
+    }
+    icon.outerHTML = buildIconMarkup(getFaviconUrl(rawUrl), "", "preview-icon link-row-icon").trim();
+    const host = getLinkIconHost(rawUrl);
+    if (host && needsIconDiscovery(host)) {
+      queueIconDiscovery(rawUrl, { priority: true });
+    }
+  }, 700);
+}
+
+function filterCategoryLinkRows(filterInput) {
+  const card = filterInput.closest("[data-category-card]");
+  if (!card) {
+    return;
+  }
+
+  const keyword = filterInput.value.trim().toLowerCase();
+  const rows = Array.from(card.querySelectorAll("[data-link-row]"));
+  let visibleCount = 0;
+  rows.forEach((row) => {
+    const text = Array.from(row.querySelectorAll("[data-link-field]"))
+      .map((input) => input.value.toLowerCase())
+      .join(" ");
+    const isVisible = !keyword || text.includes(keyword);
+    row.classList.toggle("hidden", !isVisible);
+    visibleCount += isVisible ? 1 : 0;
+  });
+
+  const countLabel = card.querySelector("[data-link-visible-count]");
+  if (countLabel) {
+    countLabel.textContent = keyword ? `${visibleCount} / ${rows.length}` : String(rows.length);
+  }
+  card.querySelector("[data-link-filter-empty]")?.classList.toggle("hidden", visibleCount > 0);
 }
 
 function handleSettingsClick(event) {
@@ -1950,7 +2108,9 @@ function handleSettingsClick(event) {
     return;
   }
 
-  const removeCategoryId = event.target.dataset.removeCategory;
+  const removeCategoryId = event.target instanceof Element
+    ? event.target.closest("[data-remove-category]")?.dataset.removeCategory
+    : "";
   if (removeCategoryId) {
     settingsDraft.categories = settingsDraft.categories.filter((category) => category.id !== removeCategoryId);
     if (activeSettingsCategoryId === removeCategoryId) {
@@ -1960,15 +2120,16 @@ function handleSettingsClick(event) {
     return;
   }
 
-  const addLinkCategoryId = event.target.dataset.addLink;
-  if (addLinkCategoryId) {
-    addLinkToCategoryDraft(addLinkCategoryId, { focusAddedLink: false });
+  const addLinkButton = event.target instanceof Element ? event.target.closest("[data-add-link]") : null;
+  if (addLinkButton) {
+    addLinkToCategoryDraft(addLinkButton.dataset.addLink, { focusAddedLink: true });
     return;
   }
 
-  const removeLinkId = event.target.dataset.removeLink;
-  if (removeLinkId) {
-    const category = settingsDraft.categories.find((item) => item.id === event.target.dataset.categoryId);
+  const removeLinkButton = event.target instanceof Element ? event.target.closest("[data-remove-link]") : null;
+  if (removeLinkButton) {
+    const removeLinkId = removeLinkButton.dataset.removeLink;
+    const category = settingsDraft.categories.find((item) => item.id === removeLinkButton.dataset.categoryId);
     if (category) {
       category.links = category.links.filter((link) => link.id !== removeLinkId);
       renderSettingsDrawer();
@@ -2144,7 +2305,6 @@ function handleTagDragStart(event) {
     categoryDragState.dropPosition = "center";
     row?.classList.add("is-category-dragging");
     tagBoard.classList.add("is-dragging-categories");
-    clearTagDragState();
 
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
@@ -2153,189 +2313,523 @@ function handleTagDragStart(event) {
     return;
   }
 
-  const card = target.closest(".tag-card");
-  if (!card || !card.dataset.linkId || !card.dataset.categoryId) {
-    return;
-  }
-
-  clearCategoryDragState();
-  dragState.categoryId = card.dataset.categoryId;
-  dragState.linkId = card.dataset.linkId;
-  card.classList.add("is-dragging");
-  tagBoard.classList.add("is-dragging-links");
-
-  if (event.dataTransfer) {
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("text/plain", dragState.linkId);
+  // Tag cards use the pointer-driven drag below; block native link/image dragging.
+  if (target.closest(".tag-card")) {
+    event.preventDefault();
   }
 }
 
 function handleTagDragOver(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) {
-    return;
-  }
-
   if (categoryDragState.categoryId) {
     handleCategoryDragOver(event);
-    return;
   }
-
-  const targetCard = target.closest(".tag-card");
-  const targetLinks = target.closest(".category-links");
-  if (!dragState.linkId) {
-    return;
-  }
-
-  if (targetCard) {
-    const sameCategory = targetCard.dataset.categoryId === dragState.categoryId;
-    const isSameCard = targetCard.dataset.linkId === dragState.linkId;
-    if (sameCategory && isSameCard) {
-      return;
-    }
-
-    event.preventDefault();
-    clearTagDropHints();
-    targetCard.classList.add("is-drop-target");
-    return;
-  }
-
-  if (!targetLinks) {
-    return;
-  }
-
-  const targetRow = targetLinks.closest(".category-row");
-  if (!targetRow?.dataset.categoryId) {
-    return;
-  }
-
-  event.preventDefault();
-  clearTagDropHints();
-  targetLinks.classList.add("is-drop-target-container");
 }
 
 function handleTagDrop(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) {
-    return;
-  }
-
   if (categoryDragState.categoryId) {
     handleCategoryDrop(event);
+  }
+}
+
+function handleTagDragEnd() {
+  clearCategoryDragState();
+}
+
+function handleTagPointerDown(event) {
+  if (event.button !== 0 || tagPointerDrag.card || tagPointerDrag.settling) {
+    return;
+  }
+  const card = event.target instanceof Element ? event.target.closest(".tag-card") : null;
+  if (!card?.dataset.linkId || !card.dataset.categoryId) {
     return;
   }
 
-  const targetCard = target.closest(".tag-card");
-  const targetLinks = target.closest(".category-links");
-  if (!dragState.linkId) {
+  Object.assign(tagPointerDrag, {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType || "mouse",
+    card,
+    active: false,
+    startX: event.clientX,
+    startY: event.clientY,
+    pointerX: event.clientX,
+    pointerY: event.clientY,
+  });
+  if (tagPointerDrag.pointerType !== "mouse") {
+    // Touch waits for a long press (like iOS) so a normal swipe still scrolls the page.
+    tagPointerDrag.holdTimer = window.setTimeout(startTagPointerDrag, TAG_DRAG_TOUCH_HOLD_MS);
+  }
+  window.addEventListener("pointermove", handleTagPointerMove);
+  window.addEventListener("pointerup", handleTagPointerUp);
+  window.addEventListener("pointercancel", handleTagPointerCancel);
+  window.addEventListener("keydown", handleTagDragKeydown);
+}
+
+function handleTagPointerMove(event) {
+  if (event.pointerId !== tagPointerDrag.pointerId) {
     return;
   }
+  tagPointerDrag.pointerX = event.clientX;
+  tagPointerDrag.pointerY = event.clientY;
+  const distance = Math.hypot(event.clientX - tagPointerDrag.startX, event.clientY - tagPointerDrag.startY);
 
-  let targetCategoryId = "";
-  let targetLinkId = "";
-
-  if (targetCard) {
-    const sameCategory = targetCard.dataset.categoryId === dragState.categoryId;
-    const isSameCard = targetCard.dataset.linkId === dragState.linkId;
-    if (sameCategory && isSameCard) {
-      clearTagDragState();
-      return;
+  if (!tagPointerDrag.active) {
+    if (tagPointerDrag.pointerType === "mouse") {
+      if (distance >= TAG_DRAG_START_DISTANCE) {
+        startTagPointerDrag();
+      }
+    } else if (distance > TAG_DRAG_TOUCH_SLOP) {
+      resetTagPointerDrag();
     }
-    targetCategoryId = targetCard.dataset.categoryId || "";
-    targetLinkId = targetCard.dataset.linkId || "";
-  } else if (targetLinks) {
-    targetCategoryId = targetLinks.closest(".category-row")?.dataset.categoryId || "";
-  }
-
-  if (!targetCategoryId) {
     return;
   }
 
   event.preventDefault();
-  const moved = moveCategoryLink(
-    dragState.categoryId,
-    dragState.linkId,
-    targetCategoryId,
-    targetLinkId
-  );
-  clearTagDragState();
+  scheduleTagDragFrame();
+}
 
-  if (!moved) {
+function handleTagPointerUp(event) {
+  if (event.pointerId !== tagPointerDrag.pointerId) {
+    return;
+  }
+  if (!tagPointerDrag.active) {
+    resetTagPointerDrag();
+    return;
+  }
+  tagPointerDrag.suppressClick = true;
+  window.setTimeout(() => {
+    tagPointerDrag.suppressClick = false;
+  }, 0);
+  finishTagPointerDrag(true);
+}
+
+function handleTagPointerCancel(event) {
+  if (event.pointerId !== tagPointerDrag.pointerId) {
+    return;
+  }
+  if (tagPointerDrag.active) {
+    finishTagPointerDrag(false);
+  } else {
+    resetTagPointerDrag();
+  }
+}
+
+function handleTagDragKeydown(event) {
+  if (event.key === "Escape" && tagPointerDrag.active) {
+    event.preventDefault();
+    finishTagPointerDrag(false);
+  }
+}
+
+function handleTagDragClickGuard(event) {
+  if (tagPointerDrag.suppressClick || tagPointerDrag.active) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+}
+
+function handleTagDragContextMenu(event) {
+  if (tagPointerDrag.card) {
+    event.preventDefault();
+  }
+}
+
+function handleTagDragTouchMove(event) {
+  if (tagPointerDrag.active) {
+    event.preventDefault();
+  }
+}
+
+function startTagPointerDrag() {
+  const { card } = tagPointerDrag;
+  window.clearTimeout(tagPointerDrag.holdTimer);
+  tagPointerDrag.holdTimer = 0;
+  if (!card?.isConnected || tagPointerDrag.active) {
     return;
   }
 
-  updateState({ categories: moved })
-    .then(() => {
-      showNotice("标签位置已保存到本地", "success");
+  const rect = card.getBoundingClientRect();
+  const ghost = card.cloneNode(true);
+  ghost.classList.add("tag-drag-ghost");
+  ghost.removeAttribute("href");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.style.opacity = "";
+  ghost.style.pointerEvents = "";
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  // Position via `translate` (applied before `scale`) so the lift scale never shifts the ghost off the pointer.
+  ghost.style.transform = "none";
+  ghost.style.translate = `${rect.left}px ${rect.top}px`;
+  document.body.appendChild(ghost);
+
+  Object.assign(tagPointerDrag, {
+    active: true,
+    ghost,
+    offsetX: tagPointerDrag.startX - rect.left,
+    offsetY: tagPointerDrag.startY - rect.top,
+    originParent: card.parentElement,
+    originNext: card.nextElementSibling,
+    originCategoryId: card.dataset.categoryId,
+    lastTargetCard: null,
+    scrollParent: getScrollParent(tagBoard),
+  });
+  ghost.style.transformOrigin = `${tagPointerDrag.offsetX}px ${tagPointerDrag.offsetY}px`;
+  card.classList.add("is-drag-placeholder");
+  tagBoard.classList.add("is-tag-pointer-dragging");
+  document.body.classList.add("is-tag-dragging");
+  window.requestAnimationFrame(() => ghost.classList.add("is-lifted"));
+  if (tagPointerDrag.pointerType !== "mouse") {
+    navigator.vibrate?.(8);
+  }
+  scheduleTagDragFrame();
+}
+
+function scheduleTagDragFrame() {
+  if (tagPointerDrag.frame) {
+    return;
+  }
+  tagPointerDrag.frame = window.requestAnimationFrame(() => {
+    tagPointerDrag.frame = 0;
+    if (!tagPointerDrag.active) {
+      return;
+    }
+    const { ghost, pointerX, pointerY, offsetX, offsetY } = tagPointerDrag;
+    ghost.style.translate = `${pointerX - offsetX}px ${pointerY - offsetY}px`;
+    updateTagDragPlaceholder(pointerX, pointerY);
+    if (autoScrollDuringTagDrag(pointerY)) {
+      scheduleTagDragFrame();
+    }
+  });
+}
+
+function updateTagDragPlaceholder(pointerX, pointerY) {
+  const placeholder = tagPointerDrag.card;
+  const hit = document.elementFromPoint(pointerX, pointerY);
+  const targetCard = hit?.closest(".tag-card");
+
+  if (targetCard && targetCard !== placeholder && tagBoard.contains(targetCard)) {
+    if (targetCard === tagPointerDrag.lastTargetCard) {
+      return;
+    }
+    const hitRect = targetCard.getBoundingClientRect();
+    const insetX = hitRect.width * TAG_SWAP_INSET;
+    const insetY = hitRect.height * TAG_SWAP_INSET;
+    if (
+      pointerX < hitRect.left + insetX ||
+      pointerX > hitRect.right - insetX ||
+      pointerY < hitRect.top + insetY ||
+      pointerY > hitRect.bottom - insetY
+    ) {
+      return;
+    }
+    const grid = targetCard.parentElement;
+    let insertBefore = targetCard;
+    if (grid === placeholder.parentElement) {
+      // Same grid: take the target's slot, like iOS home screen icons.
+      const siblings = Array.from(grid.children);
+      if (siblings.indexOf(placeholder) < siblings.indexOf(targetCard)) {
+        insertBefore = targetCard.nextElementSibling;
+      }
+    } else {
+      const targetRect = targetCard.getBoundingClientRect();
+      if (pointerX > targetRect.left + targetRect.width / 2) {
+        insertBefore = targetCard.nextElementSibling;
+      }
+    }
+    tagPointerDrag.lastTargetCard = targetCard;
+    animateTagReflow(() => grid.insertBefore(placeholder, insertBefore));
+    return;
+  }
+
+  if (targetCard !== placeholder) {
+    tagPointerDrag.lastTargetCard = null;
+  }
+  const links = hit?.closest(".category-links");
+  if (!links || !tagBoard.contains(links) || links.contains(placeholder)) {
+    return;
+  }
+
+  // Hovering an empty area of another category: append at its end.
+  let grid = links.querySelector(".tag-grid");
+  if (!grid) {
+    links.querySelector(".empty-state")?.classList.add("hidden");
+    grid = document.createElement("div");
+    grid.className = "tag-grid";
+    links.appendChild(grid);
+  }
+  const clipRect = getTagClipRect(grid);
+  const firstHiddenCard = Array.from(grid.children).find(
+    (card) => card !== placeholder && !isRectVisibleIn(card.getBoundingClientRect(), clipRect)
+  );
+  animateTagReflow(() => grid.insertBefore(placeholder, firstHiddenCard || null));
+}
+
+// FLIP reflow that respects collapsed category rows (which clip overflowing cards):
+// cards visible before and after slide to their new slot, cards entering the visible
+// row pop in, and cards pushed into the clipped area shrink out where they were.
+function animateTagReflow(mutate) {
+  const cards = Array.from(tagBoard.querySelectorAll(".tag-card"));
+  const before = new Map(
+    cards.map((card) => {
+      const rect = card.getBoundingClientRect();
+      return [card, { rect, visible: isRectVisibleIn(rect, getTagClipRect(card)) }];
     })
-    .catch((error) => {
-      console.error(error);
-      showNotice("标签位置保存失败，请重试", "error");
+  );
+  cards.forEach((card) => {
+    card.getAnimations().forEach((animation) => {
+      if (animation.id === "tag-reflow") {
+        animation.cancel();
+      }
     });
-}
-
-function handleTagDragEnd() {
-  clearTagDragState();
-  clearCategoryDragState();
-}
-
-function clearTagDropHints() {
-  tagBoard.querySelectorAll(".tag-card.is-drop-target").forEach((item) => {
-    item.classList.remove("is-drop-target");
   });
-  tagBoard.querySelectorAll(".category-links.is-drop-target-container").forEach((item) => {
-    item.classList.remove("is-drop-target-container");
+  mutate();
+  syncTagRowOverflowDuringDrag();
+
+  cards.forEach((card) => {
+    if (card === tagPointerDrag.card) {
+      return;
+    }
+    const first = before.get(card);
+    const last = card.getBoundingClientRect();
+    const lastVisible = isRectVisibleIn(last, getTagClipRect(card));
+    const deltaX = first.rect.left - last.left;
+    const deltaY = first.rect.top - last.top;
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+      return;
+    }
+
+    if (first.visible && lastVisible) {
+      runTagReflowAnimation(
+        card,
+        [{ transform: `translate(${deltaX}px, ${deltaY}px)` }, { transform: "translate(0, 0)" }],
+        TAG_REFLOW_DURATION_MS,
+        TAG_REFLOW_EASING
+      );
+    } else if (lastVisible) {
+      runTagReflowAnimation(
+        card,
+        [{ opacity: 0, transform: "scale(0.6)" }, { opacity: 1, transform: "scale(1)" }],
+        TAG_POP_DURATION_MS,
+        "cubic-bezier(0.2, 0.9, 0.3, 1.2)"
+      );
+    } else if (first.visible) {
+      shrinkOutTagCardCopy(card, first.rect);
+    }
   });
 }
 
-function clearTagDragState() {
-  tagBoard.querySelectorAll(".tag-card.is-dragging").forEach((item) => {
-    item.classList.remove("is-dragging");
+// Keeps each row's collapsed clipping in step with its live card count while dragging,
+// without touching the saved expanded state (a full render follows the drop).
+function syncTagRowOverflowDuringDrag() {
+  if (homeTagSearchQuery) {
+    return;
+  }
+  tagBoard.querySelectorAll(".category-row").forEach((row) => {
+    const grid = row.querySelector(".tag-grid");
+    if (!grid) {
+      return;
+    }
+    const columns = getGridColumnCount(grid);
+    const count = grid.querySelectorAll(".tag-card").length;
+    const hasOverflow = count > columns * getCollapsedRowCount(row);
+    row.classList.toggle("has-overflow", hasOverflow);
+    row.classList.toggle("is-expanded", hasOverflow && expandedCategoryIds.has(row.dataset.categoryId));
+    row.style.setProperty("--category-rows", String(Math.max(1, Math.ceil(count / columns))));
   });
-  clearTagDropHints();
-  tagBoard.classList.remove("is-dragging-links");
-  dragState.categoryId = "";
-  dragState.linkId = "";
 }
 
-function moveCategoryLink(fromCategoryId, fromLinkId, toCategoryId, toLinkId = "") {
+function runTagReflowAnimation(card, keyframes, duration, easing) {
+  const animation = card.animate(keyframes, { duration, easing });
+  animation.id = "tag-reflow";
+}
+
+function shrinkOutTagCardCopy(card, rect) {
+  const copy = card.cloneNode(true);
+  copy.classList.add("tag-reflow-copy");
+  copy.removeAttribute("href");
+  copy.setAttribute("aria-hidden", "true");
+  copy.style.width = `${rect.width}px`;
+  copy.style.height = `${rect.height}px`;
+  copy.style.left = `${rect.left}px`;
+  copy.style.top = `${rect.top}px`;
+  document.body.appendChild(copy);
+  copy.animate([{ opacity: 1, transform: "scale(1)" }, { opacity: 0, transform: "scale(0.6)" }], {
+    duration: TAG_POP_DURATION_MS,
+    easing: "ease-in",
+    fill: "forwards",
+  });
+  window.setTimeout(() => copy.remove(), TAG_POP_DURATION_MS + 40);
+}
+
+function getTagClipRect(node) {
+  const links = node.closest(".category-links");
+  if (!links || window.getComputedStyle(links).overflowY === "visible") {
+    return null;
+  }
+  return links.getBoundingClientRect();
+}
+
+function isRectVisibleIn(rect, clipRect) {
+  if (!clipRect) {
+    return true;
+  }
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  return (
+    centerX >= clipRect.left &&
+    centerX <= clipRect.right &&
+    centerY >= clipRect.top &&
+    centerY <= clipRect.bottom
+  );
+}
+
+function autoScrollDuringTagDrag(pointerY) {
+  const scroller = tagPointerDrag.scrollParent;
+  if (!scroller) {
+    return false;
+  }
+  const isRoot = scroller === document.scrollingElement || scroller === document.body;
+  const bounds = isRoot
+    ? { top: 0, bottom: window.innerHeight }
+    : scroller.getBoundingClientRect();
+  let delta = 0;
+  if (pointerY < bounds.top + TAG_DRAG_AUTOSCROLL_EDGE) {
+    delta = -Math.ceil((bounds.top + TAG_DRAG_AUTOSCROLL_EDGE - pointerY) / 6);
+  } else if (pointerY > bounds.bottom - TAG_DRAG_AUTOSCROLL_EDGE) {
+    delta = Math.ceil((pointerY - (bounds.bottom - TAG_DRAG_AUTOSCROLL_EDGE)) / 6);
+  }
+  if (!delta) {
+    return false;
+  }
+  const before = scroller.scrollTop;
+  scroller.scrollTop += delta;
+  return scroller.scrollTop !== before;
+}
+
+function getScrollParent(element) {
+  let node = element?.parentElement;
+  while (node) {
+    const { overflowY } = window.getComputedStyle(node);
+    if (/(auto|scroll)/.test(overflowY) && node.scrollHeight > node.clientHeight) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return document.scrollingElement;
+}
+
+function finishTagPointerDrag(commit) {
+  const { card, ghost, originParent, originNext, originCategoryId } = tagPointerDrag;
+  const linkId = card.dataset.linkId;
+  detachTagPointerListeners();
+  window.cancelAnimationFrame(tagPointerDrag.frame);
+  tagPointerDrag.frame = 0;
+  tagPointerDrag.active = false;
+  tagPointerDrag.settling = true;
+
+  if (!commit && originParent?.isConnected) {
+    animateTagReflow(() => originParent.insertBefore(card, originNext?.parentElement === originParent ? originNext : null));
+  }
+
+  const targetRect = card.getBoundingClientRect();
+  ghost.classList.add("is-settling");
+  ghost.classList.remove("is-lifted");
+  ghost.style.translate = `${targetRect.left}px ${targetRect.top}px`;
+
+  window.setTimeout(() => {
+    ghost.remove();
+    card.classList.remove("is-drag-placeholder");
+    tagBoard.classList.remove("is-tag-pointer-dragging");
+    document.body.classList.remove("is-tag-dragging");
+    const targetCategoryId = card.closest(".category-row")?.dataset.categoryId || "";
+    let nextCard = card.nextElementSibling;
+    while (nextCard && !nextCard.classList.contains("tag-card")) {
+      nextCard = nextCard.nextElementSibling;
+    }
+    const beforeLinkId = nextCard?.dataset.linkId || "";
+    resetTagPointerDrag();
+
+    const moved = commit && targetCategoryId
+      ? moveLinkBefore(originCategoryId, linkId, targetCategoryId, beforeLinkId)
+      : null;
+    if (!moved) {
+      // Restore any temporary grids / hidden empty states created while hovering.
+      renderTagBoard();
+      return;
+    }
+    updateState({ categories: moved })
+      .then(() => {
+        showNotice("标签位置已保存到本地", "success");
+      })
+      .catch((error) => {
+        console.error(error);
+        showNotice("标签位置保存失败，请重试", "error");
+      });
+  }, TAG_SETTLE_DURATION_MS);
+}
+
+function detachTagPointerListeners() {
+  window.removeEventListener("pointermove", handleTagPointerMove);
+  window.removeEventListener("pointerup", handleTagPointerUp);
+  window.removeEventListener("pointercancel", handleTagPointerCancel);
+  window.removeEventListener("keydown", handleTagDragKeydown);
+}
+
+function resetTagPointerDrag() {
+  detachTagPointerListeners();
+  window.clearTimeout(tagPointerDrag.holdTimer);
+  Object.assign(tagPointerDrag, {
+    pointerId: null,
+    card: null,
+    ghost: null,
+    active: false,
+    settling: false,
+    holdTimer: 0,
+    originParent: null,
+    originNext: null,
+    lastTargetCard: null,
+  });
+}
+
+function moveLinkBefore(fromCategoryId, linkId, toCategoryId, beforeLinkId = "") {
   const nextCategories = structuredClone(appState.categories);
   const fromCategory = nextCategories.find((item) => item.id === fromCategoryId);
   const toCategory = nextCategories.find((item) => item.id === toCategoryId);
-  if (!fromCategory || !toCategory) {
+  const fromIndex = fromCategory?.links.findIndex((item) => item.id === linkId) ?? -1;
+  if (!toCategory || fromIndex < 0) {
     return null;
   }
 
-  const fromIndex = fromCategory.links.findIndex((item) => item.id === fromLinkId);
-  if (fromIndex < 0) {
-    return null;
-  }
-
-  const sameCategory = fromCategory.id === toCategory.id;
-  const toIndexBeforeMove = toLinkId
-    ? toCategory.links.findIndex((item) => item.id === toLinkId)
-    : -1;
-  if (toLinkId && toIndexBeforeMove < 0) {
-    return null;
-  }
-  const fromOrderBefore = fromCategory.links.map((item) => item.id).join("|");
-  const toOrderBefore = sameCategory ? fromOrderBefore : toCategory.links.map((item) => item.id).join("|");
-
+  const before = nextCategories.map((category) => category.links.map((link) => link.id).join(",")).join("|");
   const [moved] = fromCategory.links.splice(fromIndex, 1);
-  let insertIndex = toCategory.links.length;
-  if (toIndexBeforeMove >= 0) {
-    insertIndex = toIndexBeforeMove;
-  }
+  const insertIndex = beforeLinkId ? toCategory.links.findIndex((item) => item.id === beforeLinkId) : -1;
+  toCategory.links.splice(insertIndex < 0 ? toCategory.links.length : insertIndex, 0, moved);
+  const after = nextCategories.map((category) => category.links.map((link) => link.id).join(",")).join("|");
+  return before === after ? null : nextCategories;
+}
 
-  toCategory.links.splice(insertIndex, 0, moved);
+function captureElementRects(elements, datasetKey) {
+  return new Map(
+    Array.from(elements).map((element) => [element.dataset[datasetKey], element.getBoundingClientRect()])
+  );
+}
 
-  const fromOrderAfter = fromCategory.links.map((item) => item.id).join("|");
-  const toOrderAfter = sameCategory ? fromOrderAfter : toCategory.links.map((item) => item.id).join("|");
-  if (fromOrderBefore === fromOrderAfter && toOrderBefore === toOrderAfter) {
-    return null;
-  }
-
-  return nextCategories;
+function playElementFlip(elements, datasetKey, previousRects) {
+  Array.from(elements).forEach((element) => {
+    const first = previousRects.get(element.dataset[datasetKey]);
+    if (!first) {
+      return;
+    }
+    const last = element.getBoundingClientRect();
+    const deltaX = first.left - last.left;
+    const deltaY = first.top - last.top;
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+      return;
+    }
+    element.animate(
+      [{ transform: `translate(${deltaX}px, ${deltaY}px)` }, { transform: "translate(0, 0)" }],
+      { duration: TAG_REFLOW_DURATION_MS, easing: TAG_REFLOW_EASING }
+    );
+  });
 }
 
 function handleCategoryDragOver(event) {
@@ -2388,7 +2882,10 @@ function handleCategoryDrop(event) {
     return;
   }
 
-  updateState({ categories: moved })
+  const previousRowRects = captureElementRects(tagBoard.querySelectorAll(".category-row"), "categoryId");
+  const saving = updateState({ categories: moved });
+  playElementFlip(tagBoard.querySelectorAll(".category-row"), "categoryId", previousRowRects);
+  saving
     .then(() => {
       showNotice("分类顺序已保存到本地", "success");
     })
@@ -2666,6 +3163,12 @@ function getGridColumnCount(gridNode) {
   return Math.max(1, columns || MAX_TAGS_PER_ROW);
 }
 
+// Rows a collapsed category shows; set per breakpoint in CSS via --collapsed-rows.
+function getCollapsedRowCount(rowNode) {
+  const value = Number.parseInt(window.getComputedStyle(rowNode).getPropertyValue("--collapsed-rows"), 10);
+  return Number.isFinite(value) && value > 0 ? value : 1;
+}
+
 function updateCategoryExpandButtonState(buttonNode, hasOverflow, isExpanded) {
   if (!(buttonNode instanceof HTMLButtonElement)) {
     return;
@@ -2715,7 +3218,7 @@ function updateTagOverflowLayout() {
     }
 
     const columns = getGridColumnCount(gridNode);
-    const hasOverflow = linkCount > columns;
+    const hasOverflow = linkCount > columns * getCollapsedRowCount(rowNode);
     const rowCount = Math.max(1, Math.ceil(linkCount / columns));
     const isExpanded = hasOverflow && expandedCategoryIds.has(categoryId);
 
@@ -2782,9 +3285,9 @@ function fitTagLabelText() {
     labelNode.style.fontSize = "";
     labelNode.style.lineHeight = "";
 
-    const defaultSize = 15;
-    const minSize = 1;
-    let currentSize = defaultSize;
+    // Start from the breakpoint's CSS size so small screens never get bumped up.
+    const minSize = 9;
+    let currentSize = Math.round(Number.parseFloat(window.getComputedStyle(labelNode).fontSize) || 15);
 
     while (currentSize > minSize && labelNode.scrollWidth > labelNode.clientWidth + 0.5) {
       currentSize -= 1;
@@ -2910,7 +3413,12 @@ function renderSettingsAnchorNav() {
         </div>
       `
     )
-    .join("");
+    .join("") + `
+      <button class="settings-category-jump-add" type="button" data-add-category-from-nav>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z" /></svg>
+        新增分类
+      </button>
+    `;
 }
 
 function updateSettingsAnchorNav(sectionName) {
@@ -2931,8 +3439,27 @@ function updateSettingsAnchorNav(sectionName) {
     button.classList.toggle("is-active", isActive);
     button.setAttribute("aria-selected", String(isActive));
     button.tabIndex = isActive ? 0 : -1;
+    if (isActive) {
+      keepTabVisibleInScroller(button);
+    }
   });
   settingsCategoryJumpList?.classList.toggle("hidden", activeAnchor !== "categories");
+}
+
+// On phones the section tabs form a horizontal scroller; keep the active one in view
+// without scrolling the page or drawer vertically (scrollIntoView would).
+function keepTabVisibleInScroller(button) {
+  const scroller = button.parentElement;
+  if (!scroller || scroller.scrollWidth <= scroller.clientWidth) {
+    return;
+  }
+  const left = button.offsetLeft - scroller.offsetLeft;
+  const right = left + button.offsetWidth;
+  if (left < scroller.scrollLeft) {
+    scroller.scrollTo({ left: left - 12, behavior: "smooth" });
+  } else if (right > scroller.scrollLeft + scroller.clientWidth) {
+    scroller.scrollTo({ left: right - scroller.clientWidth + 12, behavior: "smooth" });
+  }
 }
 
 function showSettingsSection(sectionKey) {
@@ -2956,12 +3483,26 @@ function handleSettingsAnchorNavigation(event) {
   const target = event.target instanceof Element ? event.target : null;
   const addLinkButton = target?.closest("[data-add-link-from-nav]");
   const pinButton = target?.closest("[data-toggle-category-pin]");
+  const addCategoryButton = target?.closest("[data-add-category-from-nav]");
   const anchorButton = target?.closest("[data-settings-anchor]");
-  const categoryButton = target?.closest("[data-settings-category-id]");
+  // The whole category card is clickable, not just its name text (padding and gaps used to be dead zones).
+  const categoryButton =
+    target?.closest("[data-settings-category-id]") ||
+    target?.closest(".settings-category-jump-card")?.querySelector("[data-settings-category-id]");
 
   if (addLinkButton) {
     activeSettingsCategoryId = addLinkButton.dataset.addLinkFromNav;
     addLinkToCategoryDraft(addLinkButton.dataset.addLinkFromNav, { focusAddedLink: true });
+    return;
+  }
+
+  if (addCategoryButton) {
+    addCategoryDraft();
+    window.requestAnimationFrame(() => {
+      const nameInput = categoryEditor?.querySelector('[data-category-field="name"]');
+      nameInput?.focus();
+      nameInput?.select();
+    });
     return;
   }
 
@@ -3231,10 +3772,6 @@ function updateTagViewportFade() {
   for (const target of fadeTargets) {
     target.style.opacity = "";
     target.style.pointerEvents = "";
-  }
-
-  if (window.innerWidth < TAG_VIEWPORT_FADE_MIN_WIDTH) {
-    return;
   }
 
   const searchRect = (searchBar && searchBar.getBoundingClientRect()) || searchStage.getBoundingClientRect();
@@ -3917,6 +4454,13 @@ window.__mxIconLoaded = function handleIconLoaded(imageNode) {
   clearIconSourceFailure(source);
   imageNode.dataset.iconChain = "";
 
+  const cachedSource = normalizeIconSource(iconSourceCache[host] || "");
+  if (cachedSource.startsWith("data:") && cachedSource !== source) {
+    syncIconNodesByHost(host, cachedSource);
+    imageNode.src = cachedSource;
+    return;
+  }
+
   if (iconSourceCache[host] === source) {
     syncIconNodesByHost(host, source, imageNode);
     return;
@@ -4301,6 +4845,126 @@ async function flushPromoteRelevantIconCacheEntries() {
     }
   } catch (error) {
     console.warn("server icon cache promote failed", error);
+  }
+}
+
+function getLinkIconHost(rawUrl) {
+  const url = parseUrlWithFallback(rawUrl);
+  return sanitizeIconHost(url?.host?.replace(/^www\./, "") || "");
+}
+
+function loadIconDiscoverLog() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(ICON_DISCOVER_STORAGE_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function recordIconDiscoverAttempt(host) {
+  try {
+    const now = Date.now();
+    const log = Object.fromEntries(
+      Object.entries(loadIconDiscoverLog()).filter(([, time]) => now - Number(time) < ICON_DISCOVER_RETRY_MS)
+    );
+    log[host] = now;
+    window.localStorage.setItem(ICON_DISCOVER_STORAGE_KEY, JSON.stringify(log));
+  } catch {
+    // Storage may be unavailable; discovery simply runs again next time.
+  }
+}
+
+function needsIconDiscovery(host) {
+  const cachedSource = normalizeIconSource(iconSourceCache[host] || "");
+  return !cachedSource || GENERIC_ICON_SERVICE_PATTERN.test(cachedSource);
+}
+
+let iconDiscoverKnownUrls = null;
+
+function scheduleIconDiscovery() {
+  if (!authState.loggedIn || !appState) {
+    return;
+  }
+  const currentUrls = new Set(appState.categories.flatMap((category) => category.links.map((link) => link.url)));
+  if (iconDiscoverKnownUrls) {
+    currentUrls.forEach((rawUrl) => {
+      const host = getLinkIconHost(rawUrl);
+      if (!iconDiscoverKnownUrls.has(rawUrl) && host && needsIconDiscovery(host)) {
+        queueIconDiscovery(rawUrl, { priority: true });
+      }
+    });
+  }
+  iconDiscoverKnownUrls = currentUrls;
+  window.clearTimeout(iconDiscoverTimer);
+  iconDiscoverTimer = window.setTimeout(() => {
+    iconDiscoverTimer = 0;
+    const log = loadIconDiscoverLog();
+    const now = Date.now();
+    appState.categories.forEach((category) => {
+      category.links.forEach((link) => {
+        const host = getLinkIconHost(link.url);
+        if (host && needsIconDiscovery(host) && !(now - Number(log[host] || 0) < ICON_DISCOVER_RETRY_MS)) {
+          queueIconDiscovery(link.url);
+        }
+      });
+    });
+  }, ICON_DISCOVER_DELAY_MS);
+}
+
+function queueIconDiscovery(rawUrl, { priority = false } = {}) {
+  const url = parseUrlWithFallback(rawUrl);
+  const host = getLinkIconHost(rawUrl);
+  if (!authState.loggedIn || !url || !/^https?:$/.test(url.protocol) || !host) {
+    return;
+  }
+  if (iconDiscoverPendingHosts.has(host)) {
+    const queuedIndex = iconDiscoverQueue.findIndex((job) => job.host === host);
+    if (priority && queuedIndex > 0) {
+      iconDiscoverQueue.unshift(...iconDiscoverQueue.splice(queuedIndex, 1));
+    }
+    return;
+  }
+  iconDiscoverPendingHosts.add(host);
+  const job = { host, url: url.toString() };
+  if (priority) {
+    iconDiscoverQueue.unshift(job);
+  } else {
+    iconDiscoverQueue.push(job);
+  }
+  pumpIconDiscoveryQueue();
+}
+
+function pumpIconDiscoveryQueue() {
+  while (iconDiscoverActiveCount < ICON_DISCOVER_CONCURRENCY && iconDiscoverQueue.length) {
+    const job = iconDiscoverQueue.shift();
+    iconDiscoverActiveCount += 1;
+    fetchJson("/api/icon-cache/discover", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url: job.url }),
+    })
+      .then((payload) => {
+        const dataUrl = typeof payload?.dataUrl === "string" ? payload.dataUrl : "";
+        if (!dataUrl) {
+          return;
+        }
+        const mergedHosts = mergeIconSourceCacheEntries({ [job.host]: dataUrl }, { preferExisting: false });
+        if (mergedHosts.length) {
+          refreshResolvedIconHosts(mergedHosts);
+        }
+      })
+      .catch((error) => {
+        console.warn("icon discover failed", error);
+      })
+      .finally(() => {
+        recordIconDiscoverAttempt(job.host);
+        iconDiscoverPendingHosts.delete(job.host);
+        iconDiscoverActiveCount -= 1;
+        pumpIconDiscoveryQueue();
+      });
   }
 }
 

@@ -288,6 +288,41 @@ app.post("/api/icon-cache/default/promote", requireAuth, async (req, res) => {
   }
 });
 
+app.post("/api/icon-cache/discover", requireAuth, async (req, res) => {
+  const pageUrl = sanitizeIconSourceValue(req.body?.url);
+  if (!pageUrl || pageUrl.startsWith("data:")) {
+    res.status(400).json({ message: "url is required" });
+    return;
+  }
+
+  try {
+    const host = new URL(pageUrl).host.replace(/^www\./, "").toLowerCase();
+    const cachedDataUrl = readDefaultIconCache([host])[host];
+    if (cachedDataUrl) {
+      res.json({ ok: true, host, dataUrl: cachedDataUrl });
+      return;
+    }
+    const dataUrl = await discoverPageIconAsDataUrl(pageUrl);
+    if (!dataUrl) {
+      res.json({ ok: true, host, dataUrl: "" });
+      return;
+    }
+    db.prepare(
+      `
+        INSERT INTO app_icon_cache (host, data_url, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(host) DO UPDATE SET
+          data_url = excluded.data_url,
+          updated_at = excluded.updated_at
+      `
+    ).run(host, dataUrl, new Date().toISOString());
+    res.json({ ok: true, host, dataUrl });
+  } catch (error) {
+    console.warn(`icon discover skipped for ${pageUrl}:`, error?.message || error);
+    res.json({ ok: true, dataUrl: "" });
+  }
+});
+
 app.post("/api/history", requireAuth, (req, res) => {
   const query = sanitizeText(req.body?.query, "").slice(0, 120);
   const engineId = sanitizeText(req.body?.engineId, "");
@@ -1284,6 +1319,214 @@ async function fetchRemoteIconAsDataUrl(sourceUrl) {
   }
 
   return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+const ICON_DISCOVER_HTML_MAX_BYTES = 1024 * 1024;
+
+// Reads <link rel="icon"> declarations from the page itself, for sites whose icon
+// is not at /favicon.ico (e.g. inline data: SVG icons or icons under custom paths).
+async function discoverPageIconAsDataUrl(pageUrl) {
+  await assertPublicHttpUrl(pageUrl);
+  const response = await fetch(pageUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; mx-search/1.0)",
+      Accept: "text/html,application/xhtml+xml",
+    },
+    redirect: "follow",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) {
+    throw new Error(`page fetch failed: ${response.status}`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType && !/html|xml/i.test(contentType)) {
+    throw new Error("page is not html");
+  }
+
+  const html = await readResponseTextWithLimit(response, ICON_DISCOVER_HTML_MAX_BYTES);
+  const finalUrl = response.url || pageUrl;
+  const baseHref = findHtmlTags(html, "base").map((attrs) => attrs.href).find(Boolean);
+  let baseUrl = finalUrl;
+  try {
+    baseUrl = baseHref ? new URL(baseHref, finalUrl).toString() : finalUrl;
+  } catch {
+    baseUrl = finalUrl;
+  }
+
+  const candidates = findHtmlTags(html, "link")
+    .map((attrs) => {
+      const rel = String(attrs.rel || "").toLowerCase().split(/\s+/);
+      const href = String(attrs.href || "").trim();
+      if (!href || !rel.some((item) => item === "icon" || item === "apple-touch-icon" || item === "apple-touch-icon-precomposed")) {
+        return null;
+      }
+      const type = String(attrs.type || "").toLowerCase();
+      const isSvg = type.includes("svg") || /\.svg(\?|#|$)/i.test(href) || /^data:image\/svg/i.test(href);
+      const size = Math.max(
+        0,
+        ...String(attrs.sizes || "")
+          .split(/\s+/)
+          .map((item) => Number.parseInt(item, 10))
+          .filter(Number.isFinite)
+      );
+      const score = isSvg ? 1000 : size ? Math.min(size, 512) : rel.includes("apple-touch-icon") ? 180 : 32;
+      return { href, score };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score);
+
+  for (const candidate of candidates) {
+    try {
+      if (/^data:/i.test(candidate.href)) {
+        const dataUrl = normalizeInlineIconDataUrl(candidate.href);
+        if (dataUrl) {
+          return dataUrl;
+        }
+        continue;
+      }
+      const iconUrl = new URL(candidate.href, baseUrl);
+      if (iconUrl.protocol !== "http:" && iconUrl.protocol !== "https:") {
+        continue;
+      }
+      await assertPublicHttpUrl(iconUrl.toString());
+      return await fetchRemoteIconAsDataUrl(iconUrl.toString());
+    } catch {
+      // Try the next declared icon.
+    }
+  }
+  return "";
+}
+
+async function assertPublicHttpUrl(value) {
+  const url = new URL(value);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("unsupported protocol");
+  }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const { address } = await require("dns").promises.lookup(hostname);
+  if (isPrivateIpAddress(address)) {
+    throw new Error("private address is not allowed");
+  }
+}
+
+function isPrivateIpAddress(address) {
+  const ip = String(address || "").toLowerCase().replace(/^::ffff:/, "");
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return (
+      a === 0 || a === 10 || a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    );
+  }
+  return ip === "::1" || ip === "::" || /^f[cd]/.test(ip) || /^fe[89ab]/.test(ip);
+}
+
+async function readResponseTextWithLimit(response, maxBytes) {
+  if (!response.body?.getReader) {
+    return (await response.text()).slice(0, maxBytes);
+  }
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  while (total < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    chunks.push(Buffer.from(value));
+    total += value.length;
+    if (Buffer.from(value).toString("utf8").toLowerCase().includes("</head>")) {
+      break;
+    }
+  }
+  reader.cancel().catch(() => {});
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
+}
+
+// Minimal tag scanner that respects quoted attribute values, so inline SVG
+// data URLs containing ">" do not cut a <link> tag short.
+function findHtmlTags(html, tagName) {
+  const results = [];
+  const source = String(html || "");
+  const pattern = new RegExp(`<${tagName}\\b`, "gi");
+  let match;
+  while ((match = pattern.exec(source))) {
+    const attrs = {};
+    let index = match.index + match[0].length;
+    while (index < source.length) {
+      while (/\s|\//.test(source[index] || "")) {
+        index += 1;
+      }
+      if (index >= source.length || source[index] === ">") {
+        break;
+      }
+      const nameMatch = /^[^\s=>\/]+/.exec(source.slice(index));
+      if (!nameMatch) {
+        index += 1;
+        continue;
+      }
+      const name = nameMatch[0].toLowerCase();
+      index += nameMatch[0].length;
+      while (/\s/.test(source[index] || "")) {
+        index += 1;
+      }
+      let value = "";
+      if (source[index] === "=") {
+        index += 1;
+        while (/\s/.test(source[index] || "")) {
+          index += 1;
+        }
+        const quote = source[index];
+        if (quote === '"' || quote === "'") {
+          const end = source.indexOf(quote, index + 1);
+          value = source.slice(index + 1, end === -1 ? source.length : end);
+          index = end === -1 ? source.length : end + 1;
+        } else {
+          const rawMatch = /^[^\s>]*/.exec(source.slice(index));
+          value = rawMatch[0];
+          index += value.length;
+        }
+      }
+      attrs[name] = decodeHtmlEntities(value);
+    }
+    pattern.lastIndex = index;
+    results.push(attrs);
+  }
+  return results;
+}
+
+function decodeHtmlEntities(value) {
+  return String(value)
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#(\d+);/g, (_all, code) => String.fromCodePoint(Number(code)))
+    .replace(/&amp;/g, "&");
+}
+
+function normalizeInlineIconDataUrl(href) {
+  const match = /^data:([^,;]+)((?:;[^,;]+)*),([\s\S]*)$/i.exec(String(href).trim());
+  if (!match) {
+    return "";
+  }
+  const mimeType = match[1].toLowerCase();
+  if (!mimeType.startsWith("image/")) {
+    return "";
+  }
+  if (/;base64/i.test(match[2])) {
+    return sanitizeDataUrl(`data:${mimeType};base64,${match[3].replace(/\s+/g, "")}`);
+  }
+  let payload = match[3];
+  try {
+    payload = decodeURIComponent(payload);
+  } catch {
+    // Keep raw payload when it is not URI-encoded.
+  }
+  return sanitizeDataUrl(`data:${mimeType};base64,${Buffer.from(payload, "utf8").toString("base64")}`);
 }
 
 function isProbablyValidImageDataUrl(dataUrl) {
