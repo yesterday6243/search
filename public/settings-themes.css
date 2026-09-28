@@ -1,0 +1,175 @@
+/* Theme surfaces are scoped to settings; application state and layout stay shared. */
+.settings-drawer[data-color-theme="arcade"] {
+  --theme-bg: #e5fcfc; --theme-side: #8ce9ed; --theme-accent: #00838b; --theme-ink: #124950;
+}
+.settings-drawer[data-color-theme="graphite"] {
+  --theme-bg: #edf2ed; --theme-side: #bfd0c6; --theme-accent: #416b58; --theme-ink: #263e34;
+}
+.settings-drawer[data-color-theme="candy"] {
+  --theme-bg: #fff0f6; --theme-side: #fac5dc; --theme-accent: #c02c68; --theme-ink: #622640;
+}
+.settings-drawer[data-color-theme="blueprint"] {
+  --theme-bg: #eaf5ff; --theme-side: #a6d4fb; --theme-accent: #1768ce; --theme-ink: #153d70;
+}
+.settings-drawer[data-color-theme="sunset"] {
+  --theme-bg: #fff1e7; --theme-side: #ffc9ad; --theme-accent: #b64720; --theme-ink: #673722;
+}
+.settings-drawer[data-color-theme="mint"] {
+  --theme-bg: #edfcf3; --theme-side: #b0ecd0; --theme-accent: #24754d; --theme-ink: #214d38;
+}
+.settings-drawer[data-color-theme="gold"] {
+  --theme-bg: #fff8e6; --theme-side: #ffe3a0; --theme-accent: #96600b; --theme-ink: #654718;
+}
+.settings-drawer[data-color-theme="glitch"] {
+  --theme-bg: #edfcfc; --theme-side: #8aebeb; --theme-accent: #bd3651; --theme-ink: #24454b;
+}
+.settings-drawer[data-color-theme="paper"] {
+  --theme-bg: #f7f4e9; --theme-side: #bad3be; --theme-accent: #32644c; --theme-ink: #30483a;
+}
+.settings-drawer[data-color-theme="space"] {
+  --theme-bg: #f2f0ff; --theme-side: #d0cbff; --theme-accent: #6350bd; --theme-ink: #393565;
+}
+
+.settings-drawer[data-color-theme] {
+  --theme-line: color-mix(in srgb, var(--theme-accent) 23%, white);
+  --theme-muted: color-mix(in srgb, var(--theme-ink) 76%, white);
+  --theme-card: color-mix(in srgb, var(--theme-bg) 35%, white);
+  --settings-theme-accent: var(--theme-accent) !important;
+  color: var(--theme-ink);
+  background: var(--theme-bg);
+  border-color: var(--theme-line);
+  box-shadow: 0 24px 85px #132b3b30, inset 0 1px 0 #ffffffd9;
+  color-scheme: light;
+}
+
+.settings-drawer[data-color-theme] :is(.settings-header, .settings-footer) {
+  color: var(--theme-ink);
+  background: linear-gradient(115deg, var(--theme-bg), color-mix(in srgb, var(--theme-side) 35%, white));
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-anchor-nav {
+  background: linear-gradient(160deg, var(--theme-side), color-mix(in srgb, var(--theme-side) 65%, white));
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] :is(.settings-section, .editor-card, .link-item-grid, .settings-history-item) {
+  color: var(--theme-ink);
+  background: var(--theme-card);
+  border-color: var(--theme-line);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--theme-accent) 5%, transparent);
+}
+.settings-drawer[data-color-theme] :is(.editor-card, .link-item-grid) {
+  background: color-mix(in srgb, var(--theme-bg) 50%, white);
+}
+.settings-drawer[data-color-theme] :is(.settings-trail, .field-help, .field span, .settings-title-row span, .settings-history-detail span, .editor-tip, .history-settings p, .icon-theme-picker p) {
+  color: var(--theme-muted);
+}
+.settings-drawer[data-color-theme] :is(.section-kicker, .icon-theme-picker legend) {
+  color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] :is(.field input, .field select) {
+  color: var(--theme-ink);
+  background: #ffffffeb;
+  border-color: var(--theme-line);
+  color-scheme: light;
+  accent-color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .field input::placeholder {
+  color: var(--theme-muted);
+}
+.settings-drawer[data-color-theme] :is(.field input, .field select):focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 2px;
+}
+.settings-drawer[data-color-theme] .field input[type="range"] {
+  background: transparent;
+}
+.settings-drawer[data-color-theme] .field select option {
+  color: var(--theme-ink);
+  background: white;
+}
+.settings-drawer[data-color-theme] :is(.settings-anchor-nav-button, .settings-category-jump-card, .icon-theme-choice, .radio-pill) {
+  color: var(--theme-ink);
+  background: #ffffff57;
+  border-color: transparent;
+}
+.settings-drawer[data-color-theme] :is(.settings-anchor-nav-button:hover, .settings-category-jump-card:hover) {
+  background: #ffffffa6;
+  border-color: var(--theme-line);
+  color: var(--theme-ink);
+}
+.settings-drawer[data-color-theme] :is(.settings-anchor-nav-button.is-active, .settings-category-jump-card.is-active) {
+  color: var(--theme-accent);
+  background: #fffffff2;
+  border-color: var(--theme-accent);
+  box-shadow: 0 3px 10px #21384d0a;
+}
+.settings-drawer[data-color-theme] :is(.settings-anchor-nav-button span, .settings-anchor-badge) {
+  color: var(--theme-accent);
+  background: color-mix(in srgb, var(--theme-side) 50%, white);
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-anchor-nav-button.is-active span {
+  color: white;
+  background: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .settings-category-jump-list {
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-category-jump-action {
+  color: var(--theme-muted);
+  background: #ffffff73;
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-category-jump-action.is-pinned {
+  color: white;
+  background: var(--theme-accent);
+  border-color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .ghost-button {
+  color: var(--theme-ink);
+  border-color: var(--theme-line);
+  background: #ffffffb3;
+  box-shadow: none;
+}
+.settings-drawer[data-color-theme] .ghost-button:hover {
+  background: white;
+  border-color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .ghost-button.danger {
+  color: #a33348;
+  background: #fff1f2;
+  border-color: #e5bdc4;
+}
+.settings-drawer[data-color-theme] .ghost-button.danger:hover {
+  background: #ffe4e8;
+  border-color: #bb5a6e;
+}
+.settings-drawer[data-color-theme] .primary-button {
+  color: white;
+  background: var(--theme-accent);
+  border-color: transparent;
+  box-shadow: 0 5px 15px color-mix(in srgb, var(--theme-accent) 22%, transparent);
+}
+.settings-drawer[data-color-theme] .primary-button:hover {
+  background: color-mix(in srgb, var(--theme-accent) 88%, black);
+}
+.settings-drawer[data-color-theme] .icon-theme-choice {
+  background: white;
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] :is(.icon-theme-choice:hover, .icon-theme-choice:has(input:checked)) {
+  color: var(--theme-accent);
+  border-color: var(--theme-accent);
+  background: color-mix(in srgb, var(--theme-side) 32%, white);
+}
+.settings-drawer[data-color-theme] .icon-theme-choice:has(input:checked) {
+  box-shadow: inset 0 0 0 1px var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .settings-quick-track {
+  background: color-mix(in srgb, var(--theme-side) 50%, white);
+  border-color: var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-quick-thumb {
+  background: var(--theme-accent);
+  box-shadow: none;
+}

@@ -1,6 +1,9 @@
 {
   "settings": {
     "siteTitle": "mx search",
+    "brandLabel": "mx search",
+    "iconTheme": "graphite",
+    "brandIconUrl": "",
     "subtitle": "搜索网页",
     "searchBarHeight": 55,
     "tagOpacity": 100,

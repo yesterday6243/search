@@ -8,6 +8,9 @@ const historyPanel = document.getElementById("historyPanel");
 const engineMenu = document.getElementById("engineMenu");
 const activeEngineIcon = document.getElementById("activeEngineIcon");
 const siteTitleDisplay = document.getElementById("siteTitleDisplay");
+const brandIconDisplay = document.getElementById("brandIconDisplay");
+const brandTextDisplay = document.getElementById("brandTextDisplay");
+const siteFavicon = document.getElementById("siteFavicon");
 const tagBoard = document.getElementById("tagBoard");
 const syncStatus = document.getElementById("syncStatus");
 const homeTagSearch = document.getElementById("homeTagSearch");
@@ -34,6 +37,15 @@ const settingsTrail = document.getElementById("settingsTrail");
 const settingsScroll = document.getElementById("settingsScroll");
 const settingsAnchorNav = document.getElementById("settingsAnchorNav");
 const settingsCategoryJumpList = document.getElementById("settingsCategoryJumpList");
+const settingsSections = {
+  basic: document.getElementById("settingsBasicSection"),
+  background: document.getElementById("settingsBackgroundSection"),
+  engines: document.getElementById("settingsEnginesSection"),
+  history: document.getElementById("settingsHistorySection"),
+  categories: document.getElementById("categorySection"),
+};
+let activeSettingsSection = "basic";
+let activeSettingsCategoryId = "";
 const settingsQuickScroll = document.getElementById("settingsQuickScroll");
 const settingsQuickThumb = document.getElementById("settingsQuickThumb");
 const drawerScrim = document.getElementById("drawerScrim");
@@ -48,9 +60,12 @@ const addCategoryButton = document.getElementById("addCategoryButton");
 const clearHistoryButton = document.getElementById("clearHistoryButton");
 const historyCountLabel = document.getElementById("historyCountLabel");
 const historyLimitInput = document.getElementById("historyLimitInput");
+const settingsHistoryList = document.getElementById("settingsHistoryList");
 const engineEditor = document.getElementById("engineEditor");
 const categoryEditor = document.getElementById("categoryEditor");
 const siteTitleInput = document.getElementById("siteTitleInput");
+const brandLabelInput = document.getElementById("brandLabelInput");
+const iconThemeGrid = document.getElementById("iconThemeGrid");
 const searchPlaceholderInput = document.getElementById("searchPlaceholderInput");
 const searchBarHeightInput = document.getElementById("searchBarHeightInput");
 const searchBarHeightValue = document.getElementById("searchBarHeightValue");
@@ -86,6 +101,18 @@ const registerPasswordConfirmInput = document.getElementById("registerPasswordCo
 const registerSubmitButton = document.getElementById("registerSubmitButton");
 const noticeToast = document.getElementById("noticeToast");
 const BRAND_NAME = "mx search";
+const ICON_THEMES = [
+  { id: "graphite", name: "石墨极简", file: "/icon-options/pixel-magnifiers/02-graphite.svg", panel: "#172325", accent: "#a9d1b6" },
+  { id: "arcade", name: "街机霓虹", file: "/icon-options/pixel-magnifiers/01-arcade.svg", panel: "#191b3f", accent: "#65f2d0" },
+  { id: "candy", name: "糖果粉", file: "/icon-options/pixel-magnifiers/03-candy.svg", panel: "#422038", accent: "#ff9bc7" },
+  { id: "blueprint", name: "蓝图测绘", file: "/icon-options/pixel-magnifiers/04-blueprint.svg", panel: "#142c58", accent: "#a2e2fb" },
+  { id: "sunset", name: "落日胶片", file: "/icon-options/pixel-magnifiers/05-sunset.svg", panel: "#42233f", accent: "#ffc485" },
+  { id: "mint", name: "薄荷清新", file: "/icon-options/pixel-magnifiers/06-mint.svg", panel: "#173c39", accent: "#b9e9d3" },
+  { id: "gold", name: "金属夜色", file: "/icon-options/pixel-magnifiers/07-gold.svg", panel: "#272339", accent: "#ffc75b" },
+  { id: "glitch", name: "故障信号", file: "/icon-options/pixel-magnifiers/08-glitch.svg", panel: "#111a27", accent: "#00e4d4" },
+  { id: "paper", name: "旧纸印记", file: "/icon-options/pixel-magnifiers/09-paper.svg", panel: "#2a4243", accent: "#e5cf9d" },
+  { id: "space", name: "星际探测", file: "/icon-options/pixel-magnifiers/10-space.svg", panel: "#141a3d", accent: "#abb1ff" },
+];
 const MAX_TAGS_PER_ROW = 10;
 const LOCAL_HISTORY_STORAGE_KEY = "mx_search_local_history_v1";
 const STATE_SNAPSHOT_STORAGE_KEY = "mx_state_snapshot_v1";
@@ -134,6 +161,9 @@ const AUTH_MODE_REGISTER = "register";
 const GUEST_STATE = {
   settings: {
     siteTitle: "mx search",
+    brandLabel: "mx search",
+    iconTheme: "graphite",
+    brandIconUrl: "",
     subtitle: "搜索网页",
     searchBarHeight: 68,
     tagOpacity: 94,
@@ -229,7 +259,11 @@ async function boot() {
       clearPersistedStateSnapshot();
       applyGuestState();
     }
-    await hydratePreferredUserStateOnce({ silent: true });
+    const hasUnsyncedLocalState =
+      cachedStatePayload?.username === authState.username && getCurrentSyncMeta().dirty;
+    if (!hasUnsyncedLocalState) {
+      await hydratePreferredUserStateOnce({ silent: true });
+    }
   } else {
     clearPersistedStateSnapshot();
     applyGuestState();
@@ -354,6 +388,7 @@ function bindEvents() {
   settingsForm.addEventListener("click", handleSettingsClick);
   settingsScroll.addEventListener("scroll", handleSettingsScroll, { passive: true });
   settingsAnchorNav?.addEventListener("click", handleSettingsAnchorNavigation);
+  settingsAnchorNav?.addEventListener("keydown", handleSettingsAnchorKeydown);
   homeTagSearchButton?.addEventListener("click", toggleHomeTagSearch);
   homeTagSearchInput?.addEventListener("input", handleHomeTagSearchInput);
   settingsQuickScroll?.addEventListener("pointerdown", handleSettingsQuickTrackPointerDown);
@@ -373,6 +408,9 @@ function bindEvents() {
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".search-panel")) {
       closeMenus();
+    }
+    if (!event.target.closest("#homeTagSearch") && !event.target.closest("#homeTagSearchButton")) {
+      closeHomeTagSearch();
     }
   });
 
@@ -541,7 +579,7 @@ async function hydrateStateFromServerOnce(options = {}) {
 
   try {
     const payload = await fetchJson("/api/state");
-    applyState(payload, { persistLocalCache: true });
+    applyState(payload, { persistLocalCache: true, preserveLocalHistoryLimit: true });
     return true;
   } catch (error) {
     console.error(error);
@@ -563,7 +601,7 @@ async function hydratePreferredUserStateOnce(options = {}) {
     const latestBackupId = syncModalBackups[0]?.id;
     if (latestBackupId) {
       const backupPayload = await fetchJson(`/api/backups/${encodeURIComponent(latestBackupId)}`);
-      applyState(backupPayload, { persistLocalCache: true });
+      applyState(backupPayload, { persistLocalCache: true, preserveLocalHistoryLimit: true });
       return true;
     }
   } catch (error) {
@@ -967,7 +1005,7 @@ async function handleRestoreBackup(backupId) {
         state: payload.state,
         updatedAt: new Date().toISOString(),
       },
-      { persistLocalCache: true }
+      { persistLocalCache: true, preserveLocalHistoryLimit: true }
     );
     queuePromoteRelevantIconCacheEntries(payload.state);
     markSyncAction("sync");
@@ -1066,10 +1104,17 @@ async function handleDeleteBackup(backupId) {
 function applyState(payload, options = {}) {
   const previousBackgroundRefreshKey = currentBackgroundRefreshKey;
   const persistLocalCache = options.persistLocalCache !== false;
+  const localHistoryLimit = appState?.settings?.historyLimit;
   const nextState = {
     ...payload.state,
     updatedAt: payload.updatedAt,
   };
+  if (options.preserveLocalHistoryLimit && localHistoryLimit != null) {
+    nextState.settings = {
+      ...nextState.settings,
+      historyLimit: normalizeHistoryLimit(localHistoryLimit),
+    };
+  }
   nextState.history = loadLocalHistory(
     nextState.engines,
     nextState.selectedEngineId,
@@ -1089,7 +1134,8 @@ function applyState(payload, options = {}) {
   appState.settings.background.bingRecentCount = bingRecentCount;
 
   document.title = appState.settings.siteTitle || BRAND_NAME;
-  siteTitleDisplay.textContent = BRAND_NAME;
+  applyIconTheme(appState.settings.iconTheme);
+  renderBrandIdentity();
   searchInput.placeholder = placeholder;
   applySearchBarHeight(searchBarHeight);
   applyTagOpacity(tagOpacity);
@@ -1108,6 +1154,7 @@ function applyState(payload, options = {}) {
   scheduleBackgroundRotation();
   renderTagBoard();
   renderHistoryList(searchInput.value);
+  renderSettingsHistoryList();
   renderEngineMenu();
   primeEngineButtonIcons();
   queueTagViewportFadeUpdate();
@@ -1122,6 +1169,41 @@ function applyState(payload, options = {}) {
     persistUiPrefsSnapshot(appState.settings);
   }
   renderSyncStatus();
+}
+
+function normalizeBrandIconUrl(value) {
+  if (typeof value !== "string" || !value.trim() || value.length > 500) {
+    return "";
+  }
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function renderBrandIdentity() {
+  if (!appState) {
+    return;
+  }
+  brandTextDisplay.textContent = appState.settings.brandLabel?.trim() || BRAND_NAME;
+  const theme = ICON_THEMES.find((item) => item.id === appState.settings.iconTheme) || ICON_THEMES[0];
+  const iconUrl = theme.file;
+  brandIconDisplay.onerror = () => {
+    brandIconDisplay.onerror = null;
+    brandIconDisplay.src = ICON_THEMES[0].file;
+    siteFavicon.href = ICON_THEMES[0].file;
+  };
+  brandIconDisplay.src = iconUrl;
+  siteFavicon.href = iconUrl;
+}
+
+function applyIconTheme(themeId) {
+  const theme = ICON_THEMES.find((item) => item.id === themeId) || ICON_THEMES[0];
+  settingsDrawer.dataset.colorTheme = theme.id;
+  settingsDrawer.style.setProperty("--settings-theme-panel", theme.panel);
+  settingsDrawer.style.setProperty("--settings-theme-accent", theme.accent);
 }
 
 function renderActiveEngineButton() {
@@ -1482,7 +1564,10 @@ function openSettings() {
     categories: appState.categories,
   });
 
+  activeSettingsSection = "basic";
+  activeSettingsCategoryId = settingsDraft.categories[0]?.id || "";
   renderSettingsDrawer();
+  settingsScroll.scrollTop = 0;
   settingsDrawer.classList.remove("hidden");
   settingsDrawer.setAttribute("aria-hidden", "false");
   syncOverlayVisibility();
@@ -1541,6 +1626,7 @@ function closeSettings() {
   if (appState?.settings) {
     applySearchBarHeight(appState.settings.searchBarHeight);
     applyTagOpacity(appState.settings.tagOpacity);
+    applyIconTheme(appState.settings.iconTheme);
   }
   settingsDrawer.classList.add("hidden");
   settingsDrawer.setAttribute("aria-hidden", "true");
@@ -1567,6 +1653,17 @@ function renderSettingsDrawer() {
   }
 
   siteTitleInput.value = settingsDraft.settings.siteTitle || "";
+  brandLabelInput.value = settingsDraft.settings.brandLabel || BRAND_NAME;
+  const selectedTheme = ICON_THEMES.find((theme) => theme.id === settingsDraft.settings.iconTheme) || ICON_THEMES[0];
+  settingsDraft.settings.iconTheme = selectedTheme.id;
+  applyIconTheme(selectedTheme.id);
+  iconThemeGrid.innerHTML = ICON_THEMES.map((theme) => `
+    <label class="icon-theme-choice" style="--choice-color:${theme.accent}">
+      <input type="radio" name="iconTheme" value="${theme.id}" ${theme.id === selectedTheme.id ? "checked" : ""} />
+      <img src="${theme.file}" alt="" />
+      <span>${theme.name}</span>
+    </label>
+  `).join("");
   searchPlaceholderInput.value = normalizePlaceholder(settingsDraft.settings.subtitle);
   const searchBarHeight = normalizeSearchBarHeight(settingsDraft.settings.searchBarHeight);
   settingsDraft.settings.searchBarHeight = searchBarHeight;
@@ -1628,7 +1725,11 @@ function renderSettingsDrawer() {
     })
     .join("");
 
+  if (!settingsDraft.categories.some((category) => category.id === activeSettingsCategoryId)) {
+    activeSettingsCategoryId = settingsDraft.categories[0]?.id || "";
+  }
   categoryEditor.innerHTML = settingsDraft.categories
+    .filter((category) => category.id === activeSettingsCategoryId)
     .map(
       (category) => `
         <article class="editor-card category-editor-card" data-category-card="${escapeAttribute(category.id)}">
@@ -1672,6 +1773,8 @@ function renderSettingsDrawer() {
     .join("");
 
   renderSettingsAnchorNav();
+  renderSettingsHistoryList();
+  showSettingsSection(activeSettingsSection);
   queueSettingsTrailUpdate();
   queueSettingsQuickScrollUpdate();
 }
@@ -1685,6 +1788,17 @@ function handleSettingsInput(event) {
 
   if (target === siteTitleInput) {
     settingsDraft.settings.siteTitle = target.value;
+    return;
+  }
+
+  if (target === brandLabelInput) {
+    settingsDraft.settings.brandLabel = target.value;
+    return;
+  }
+
+  if (target.name === "iconTheme") {
+    settingsDraft.settings.iconTheme = target.value;
+    applyIconTheme(target.value);
     return;
   }
 
@@ -1820,6 +1934,12 @@ function handleSettingsClick(event) {
     return;
   }
 
+  const historyButton = event.target instanceof Element ? event.target.closest("[data-delete-history]") : null;
+  if (historyButton) {
+    deleteLocalHistoryEntry(historyButton.dataset.deleteHistory);
+    return;
+  }
+
   const removeEngineId = event.target.dataset.removeEngine;
   if (removeEngineId) {
     settingsDraft.engines = settingsDraft.engines.filter((engine) => engine.id !== removeEngineId);
@@ -1833,6 +1953,9 @@ function handleSettingsClick(event) {
   const removeCategoryId = event.target.dataset.removeCategory;
   if (removeCategoryId) {
     settingsDraft.categories = settingsDraft.categories.filter((category) => category.id !== removeCategoryId);
+    if (activeSettingsCategoryId === removeCategoryId) {
+      activeSettingsCategoryId = settingsDraft.categories[0]?.id || "";
+    }
     renderSettingsDrawer();
     return;
   }
@@ -1901,12 +2024,15 @@ function addCategoryDraft() {
     return;
   }
 
+  const id = createId("category");
   settingsDraft.categories.push({
-    id: createId("category"),
+    id,
     name: "新分类",
     links: [],
   });
+  activeSettingsCategoryId = id;
   renderSettingsDrawer();
+  showSettingsSection("categories");
 }
 
 async function saveSettings(event) {
@@ -1971,7 +2097,19 @@ async function clearHistory() {
   persistLocalHistory(appState.history);
   updateHistoryCountLabel();
   renderHistoryList(searchInput.value);
+  renderSettingsHistoryList();
   showNotice("本地搜索历史已清空", "success");
+}
+
+function deleteLocalHistoryEntry(historyId) {
+  if (!appState || !historyId) {
+    return;
+  }
+  appState.history = appState.history.filter((entry) => entry.id !== historyId);
+  persistLocalHistory(appState.history);
+  updateHistoryCountLabel();
+  renderHistoryList(searchInput.value);
+  renderSettingsHistoryList();
 }
 
 async function updateState(patch, options = {}) {
@@ -2714,23 +2852,13 @@ function updateSettingsTrail() {
     return;
   }
 
-  const sectionNodes = Array.from(settingsScroll.querySelectorAll("[data-trail-section]"));
-  if (!sectionNodes.length) {
+  const activeSection = settingsSections[activeSettingsSection];
+  if (!activeSection) {
     settingsTrail.textContent = "首页配置";
     return;
   }
 
   const containerTop = settingsScroll.getBoundingClientRect().top;
-  const sectionThreshold = 20;
-  let activeSection = sectionNodes[0];
-
-  for (const section of sectionNodes) {
-    const top = section.getBoundingClientRect().top - containerTop;
-    if (top <= sectionThreshold) {
-      activeSection = section;
-    }
-  }
-
   const sectionName = activeSection.dataset.trailSection || "基础信息";
   let trailText = `首页配置 - ${sectionName}`;
 
@@ -2767,8 +2895,8 @@ function renderSettingsAnchorNav() {
   settingsCategoryJumpList.innerHTML = categories
     .map(
       (category) => `
-        <div class="settings-category-jump-card">
-          <button class="settings-category-jump-name" type="button" data-settings-category-id="${escapeAttribute(category.id)}">
+        <div class="settings-category-jump-card ${category.id === activeSettingsCategoryId ? "is-active" : ""}">
+          <button class="settings-category-jump-name" type="button" data-settings-category-id="${escapeAttribute(category.id)}" aria-current="${category.id === activeSettingsCategoryId ? "true" : "false"}">
           <span>${escapeHtml(category.name || "未命名分类")}</span>
           </button>
           <div class="settings-category-jump-actions">
@@ -2799,9 +2927,29 @@ function updateSettingsAnchorNav(sectionName) {
   };
   const activeAnchor = anchorBySection[sectionName] || "basic";
   settingsAnchorNav.querySelectorAll("[data-settings-anchor]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.settingsAnchor === activeAnchor);
+    const isActive = button.dataset.settingsAnchor === activeAnchor;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+    button.tabIndex = isActive ? 0 : -1;
   });
   settingsCategoryJumpList?.classList.toggle("hidden", activeAnchor !== "categories");
+}
+
+function showSettingsSection(sectionKey) {
+  if (!settingsSections[sectionKey]) {
+    return;
+  }
+  const sectionChanged = activeSettingsSection !== sectionKey;
+  activeSettingsSection = sectionKey;
+  Object.entries(settingsSections).forEach(([key, section]) => {
+    section?.classList.toggle("hidden", key !== sectionKey);
+  });
+  if (sectionChanged && settingsScroll) {
+    settingsScroll.scrollTop = 0;
+  }
+  updateSettingsAnchorNav(settingsSections[sectionKey].dataset.trailSection);
+  queueSettingsTrailUpdate();
+  queueSettingsQuickScrollUpdate();
 }
 
 function handleSettingsAnchorNavigation(event) {
@@ -2810,9 +2958,9 @@ function handleSettingsAnchorNavigation(event) {
   const pinButton = target?.closest("[data-toggle-category-pin]");
   const anchorButton = target?.closest("[data-settings-anchor]");
   const categoryButton = target?.closest("[data-settings-category-id]");
-  let targetElement = null;
 
   if (addLinkButton) {
+    activeSettingsCategoryId = addLinkButton.dataset.addLinkFromNav;
     addLinkToCategoryDraft(addLinkButton.dataset.addLinkFromNav, { focusAddedLink: true });
     return;
   }
@@ -2828,27 +2976,31 @@ function handleSettingsAnchorNavigation(event) {
   }
 
   if (anchorButton) {
-    const sectionByAnchor = {
-      basic: "settingsBasicSection",
-      background: "settingsBackgroundSection",
-      engines: "settingsEnginesSection",
-      history: "settingsHistorySection",
-      categories: "categorySection",
-    };
-    targetElement = document.getElementById(sectionByAnchor[anchorButton.dataset.settingsAnchor]);
-  } else if (categoryButton) {
-    targetElement = categoryEditor?.querySelector(
-      `[data-category-card="${CSS.escape(categoryButton.dataset.settingsCategoryId || "")}"]`
-    );
+    showSettingsSection(anchorButton.dataset.settingsAnchor);
+    return;
   }
+  if (categoryButton) {
+    activeSettingsCategoryId = categoryButton.dataset.settingsCategoryId;
+    renderSettingsDrawer();
+    showSettingsSection("categories");
+    settingsScroll.scrollTop = 0;
+  }
+}
 
-  if (!(targetElement instanceof HTMLElement) || !settingsScroll) {
+function handleSettingsAnchorKeydown(event) {
+  const current = event.target instanceof Element ? event.target.closest("[data-settings-anchor]") : null;
+  if (!current || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
     return;
   }
 
-  const targetTop =
-    targetElement.getBoundingClientRect().top - settingsScroll.getBoundingClientRect().top + settingsScroll.scrollTop;
-  settingsScroll.scrollTop = Math.max(0, Math.round(targetTop));
+  const tabs = Array.from(settingsAnchorNav.querySelectorAll("[data-settings-anchor]"));
+  const index = tabs.indexOf(current);
+  const nextIndex = event.key === "Home" ? 0
+    : event.key === "End" ? tabs.length - 1
+    : (index + (event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[nextIndex].focus();
+  showSettingsSection(tabs[nextIndex].dataset.settingsAnchor);
 }
 
 function scrollSettingsToCategoryBottom(categoryId) {
@@ -2875,6 +3027,17 @@ function toggleHomeTagSearch() {
     return;
   }
 
+  closeHomeTagSearch();
+}
+
+function closeHomeTagSearch() {
+  if (!homeTagSearch || !homeTagSearchInput || !homeTagSearch.classList.contains("is-open")) {
+    return;
+  }
+
+  homeTagSearch.classList.remove("is-open");
+  homeTagSearch.setAttribute("aria-hidden", "true");
+  homeTagSearchButton?.classList.remove("is-active");
   homeTagSearchQuery = "";
   homeTagSearchInput.value = "";
   renderTagBoard();
@@ -2944,7 +3107,7 @@ function updateSettingsQuickGuides({ trackInset, maxThumbTravel, maxScroll }) {
     return;
   }
 
-  const sections = Array.from(settingsScroll.querySelectorAll("[data-trail-section]"));
+  const sections = Array.from(settingsScroll.querySelectorAll("[data-trail-section]:not(.hidden)"));
   const effectiveMaxScroll = Math.max(0, maxScroll);
 
   guideNodes.forEach((guideNode, index) => {
@@ -3392,6 +3555,14 @@ function sanitizeCachedStateSnapshot(state) {
         typeof settingsSource.siteTitle === "string" && settingsSource.siteTitle.trim()
           ? settingsSource.siteTitle.trim()
           : BRAND_NAME,
+      brandLabel:
+        typeof settingsSource.brandLabel === "string" && settingsSource.brandLabel.trim()
+          ? settingsSource.brandLabel.trim().slice(0, 24)
+          : BRAND_NAME,
+      iconTheme: ICON_THEMES.some((theme) => theme.id === settingsSource.iconTheme)
+        ? settingsSource.iconTheme
+        : "graphite",
+      brandIconUrl: normalizeBrandIconUrl(settingsSource.brandIconUrl),
       subtitle:
         typeof settingsSource.subtitle === "string" && settingsSource.subtitle.trim()
           ? settingsSource.subtitle.trim()
@@ -3524,6 +3695,7 @@ function addLocalHistoryEntry(query, engineId) {
   persistLocalHistory(nextHistory);
   updateHistoryCountLabel();
   renderHistoryList(searchInput.value);
+  renderSettingsHistoryList();
 }
 
 function loadLocalHistory(engines, selectedEngineId, limit = 100) {
@@ -3590,6 +3762,29 @@ function updateHistoryCountLabel() {
     return;
   }
   historyCountLabel.textContent = `最近保留 ${appState.settings.historyLimit} 条（仅本机），目前 ${appState.history.length} 条`;
+}
+
+function renderSettingsHistoryList() {
+  if (!settingsHistoryList || !appState) {
+    return;
+  }
+  if (!appState.history.length) {
+    settingsHistoryList.innerHTML = '<div class="editor-tip">当前浏览器还没有搜索历史。</div>';
+    return;
+  }
+
+  settingsHistoryList.innerHTML = appState.history.map((entry) => {
+    const engine = appState.engines.find((item) => item.id === entry.engineId);
+    return `
+      <div class="settings-history-item">
+        <div class="settings-history-detail">
+          <strong>${escapeHtml(entry.query)}</strong>
+          <span>${escapeHtml(engine?.name || "搜索")} · ${escapeHtml(formatPreciseTime(entry.createdAt))}</span>
+        </div>
+        <button class="ghost-button danger" type="button" data-delete-history="${escapeAttribute(entry.id)}" aria-label="删除搜索记录 ${escapeAttribute(entry.query)}">删除</button>
+      </div>
+    `;
+  }).join("");
 }
 
 function getActiveEngine() {

@@ -685,7 +685,7 @@ function listUserBackups(userId) {
     .all(userId)
     .map((row) => ({
       id: String(row.id),
-      name: sanitizeBackupName(row.name) || formatBackupName(row.created_at),
+      name: normalizeBackupName(row.name, row.created_at),
       createdAt: row.created_at,
     }));
 }
@@ -712,7 +712,7 @@ function getUserBackupRecord(userId, backupId) {
 
   return {
     id: String(row.id),
-    name: sanitizeBackupName(row.name) || formatBackupName(row.created_at),
+    name: normalizeBackupName(row.name, row.created_at),
     createdAt: row.created_at,
     state: sanitizeState(safelyParse(row.data), defaultState),
   };
@@ -958,6 +958,11 @@ function sanitizeSettings(input, fallback) {
     siteTitle: normalizeSiteTitle(
       sanitizeText(source.siteTitle, fallback.siteTitle).slice(0, 32) || fallback.siteTitle
     ),
+    brandLabel: sanitizeText(source.brandLabel, fallback.brandLabel || "mx search").slice(0, 24) || "mx search",
+    iconTheme: ["graphite", "arcade", "candy", "blueprint", "sunset", "mint", "gold", "glitch", "paper", "space"].includes(source.iconTheme)
+      ? source.iconTheme
+      : "graphite",
+    brandIconUrl: sanitizeBrandIconUrl(source.brandIconUrl),
     subtitle: normalizePlaceholderText(
       sanitizeText(source.subtitle, fallback.subtitle).slice(0, 80) || fallback.subtitle
     ),
@@ -1398,6 +1403,11 @@ function sanitizeBackupName(value, fallback = "") {
   return trimmed;
 }
 
+function normalizeBackupName(value, createdAt) {
+  const name = sanitizeBackupName(value);
+  return name.replace(/^澶囦唤(?=\s|$)/, "备份") || formatBackupName(createdAt);
+}
+
 function formatBackupName(value) {
   const date = new Date(value || Date.now());
   const year = date.getFullYear();
@@ -1405,7 +1415,7 @@ function formatBackupName(value) {
   const day = String(date.getDate()).padStart(2, "0");
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
-  return `澶囦唤 ${year}/${month}/${day} ${hour}:${minute}`;
+  return `备份 ${year}/${month}/${day} ${hour}:${minute}`;
 }
 
 function sanitizeSearchBarHeight(value, fallback = 68) {
@@ -1470,6 +1480,14 @@ function sanitizePublicUrl(value) {
   } catch {
     return "";
   }
+}
+
+function sanitizeBrandIconUrl(value) {
+  if (typeof value !== "string" || value.length > 500) {
+    return "";
+  }
+  const url = sanitizePublicUrl(value);
+  return url.startsWith("https://") && url.length <= 500 ? url : "";
 }
 
 function sanitizeTemplateUrl(value) {

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MX Search · 图标方案</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <style>
+    :root { color-scheme: light; --ink: #16243a; --muted: #647084; --paper: #f2f1ec; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--ink); background: radial-gradient(circle at 10% 5%, #e3ecea, transparent 33%), radial-gradient(circle at 90% 15%, #f3e3d6, transparent 27%), var(--paper); font-family: "Aptos", "Segoe UI", "Microsoft YaHei", sans-serif; }
+    main { max-width: 1340px; margin: auto; padding: 60px 32px 90px; }
+    header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: end; margin-bottom: 40px; }
+    .eyebrow { margin: 0 0 15px; font-size: 12px; font-weight: 800; letter-spacing: .24em; color: #a45b46; }
+    h1 { margin: 0; font-family: Georgia, "Microsoft YaHei", serif; font-size: clamp(38px, 5vw, 72px); letter-spacing: -.05em; line-height: 1; }
+    .intro { max-width: 430px; margin: 0; color: var(--muted); line-height: 1.7; font-size: 15px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+    article { min-width: 0; overflow: hidden; border: 1px solid #d9dedb; border-radius: 22px; background: #fffdf9; box-shadow: 0 10px 30px #2531420b; }
+    .stage { min-height: 178px; display: flex; justify-content: center; align-items: center; position: relative; background: var(--stage); }
+    .stage::before { content: ""; position: absolute; inset: 18px; border: 1px solid #ffffff7d; border-radius: 18px; pointer-events: none; }
+    .stage img { display: block; width: 106px; height: 106px; filter: drop-shadow(0 12px 16px #0b193324); }
+    .details { padding: 18px 20px 20px; }
+    .title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .number { font-size: 11px; letter-spacing: .18em; font-weight: 800; color: #a45b46; }
+    h2 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+    .details p { min-height: 42px; margin: 9px 0 15px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .card-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding-top: 14px; border-top: 1px solid #e9eae6; }
+    .small-view { display: inline-flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+    .small-view img { width: 24px; height: 24px; }
+    a { color: #184b5c; font-size: 13px; font-weight: 800; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    @media (max-width: 760px) { main { padding: 38px 18px 70px; } header { grid-template-columns: 1fr; gap: 14px; } .grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow">MX SEARCH / ICON EXPLORATIONS</p><h1>十种图标性格</h1></div>
+      <p class="intro">同一个搜索首页，十种不同视觉方向。每款均为独立矢量 SVG，放大展示与小尺寸预览放在一起，方便比较实际使用效果。</p>
+    </header>
+    <section class="grid" aria-label="图标方案">
+      <article style="--stage:linear-gradient(145deg,#bdcadb,#e6eaed)"><div class="stage"><img src="01-midnight.svg" alt="深夜字母图标" /></div><div class="details"><div class="title-row"><h2>深夜字母</h2><span class="number">01</span></div><p>海军蓝底，清晰的 MX 字母组合，稳重且通用。</p><div class="card-foot"><span class="small-view"><img src="01-midnight.svg" alt="" />小尺寸</span><a href="01-midnight.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#d9f0f5,#f4fcff)"><div class="stage"><img src="02-frost.svg" alt="冰蓝玻璃图标" /></div><div class="details"><div class="title-row"><h2>冰蓝玻璃</h2><span class="number">02</span></div><p>透明冷感的搜索镜头，突出“找”的动作。</p><div class="card-foot"><span class="small-view"><img src="02-frost.svg" alt="" />小尺寸</span><a href="02-frost.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#e9deca,#f8f2e5)"><div class="stage"><img src="03-editorial.svg" alt="纸本印刷图标" /></div><div class="details"><div class="title-row"><h2>纸本印刷</h2><span class="number">03</span></div><p>奶油纸色、深墨大字与红色印记，像一本索引。</p><div class="card-foot"><span class="small-view"><img src="03-editorial.svg" alt="" />小尺寸</span><a href="03-editorial.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#2e2549,#0c1226)"><div class="stage"><img src="04-neon.svg" alt="霓虹轨道图标" /></div><div class="details"><div class="title-row"><h2>霓虹轨道</h2><span class="number">04</span></div><p>青紫光环与放大镜，适合更鲜明的科技气质。</p><div class="card-foot"><span class="small-view"><img src="04-neon.svg" alt="" />小尺寸</span><a href="04-neon.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#f7d3ae,#ec937d)"><div class="stage"><img src="05-sunrise.svg" alt="暖日渐层图标" /></div><div class="details"><div class="title-row"><h2>暖日渐层</h2><span class="number">05</span></div><p>橘红日出与温暖的 MX，更有生活感。</p><div class="card-foot"><span class="small-view"><img src="05-sunrise.svg" alt="" />小尺寸</span><a href="05-sunrise.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#d7cbed,#f2e3eb)"><div class="stage"><img src="06-pixel.svg" alt="像素游戏图标" /></div><div class="details"><div class="title-row"><h2>像素游戏</h2><span class="number">06</span></div><p>八位机方块与高对比配色，轻松、有记忆点。</p><div class="card-foot"><span class="small-view"><img src="06-pixel.svg" alt="" />小尺寸</span><a href="06-pixel.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#a8dfc7,#e5f4db)"><div class="stage"><img src="07-ribbon.svg" alt="薄荷丝带图标" /></div><div class="details"><div class="title-row"><h2>薄荷丝带</h2><span class="number">07</span></div><p>柔和绿底与交织线条，亲和又有结构感。</p><div class="card-foot"><span class="small-view"><img src="07-ribbon.svg" alt="" />小尺寸</span><a href="07-ribbon.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#f0aaaa,#ffe4d8)"><div class="stage"><img src="08-target.svg" alt="红色靶心图标" /></div><div class="details"><div class="title-row"><h2>红色靶心</h2><span class="number">08</span></div><p>放大镜里的 X，明确传达搜索和定位。</p><div class="card-foot"><span class="small-view"><img src="08-target.svg" alt="" />小尺寸</span><a href="08-target.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#c3d3b7,#f0ebd9)"><div class="stage"><img src="09-botanical.svg" alt="植物手帖图标" /></div><div class="details"><div class="title-row"><h2>植物手帖</h2><span class="number">09</span></div><p>纸张、叶片与细线搜索镜头，安静自然。</p><div class="card-foot"><span class="small-view"><img src="09-botanical.svg" alt="" />小尺寸</span><a href="09-botanical.svg" download>下载 SVG</a></div></div></article>
+      <article style="--stage:linear-gradient(145deg,#9ba8e7,#d9dcf1)"><div class="stage"><img src="10-cosmic.svg" alt="星际轨道图标" /></div><div class="details"><div class="title-row"><h2>星际轨道</h2><span class="number">10</span></div><p>圆形星球、双轨道与金色星点，更具探索感。</p><div class="card-foot"><span class="small-view"><img src="10-cosmic.svg" alt="" />小尺寸</span><a href="10-cosmic.svg" download>下载 SVG</a></div></div></article>
+    </section>
+  </main>
+</body>
+</html>

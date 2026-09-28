@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Shen Search</title>
+    <link rel="icon" type="image/svg+xml" href="/icon-options/pixel-magnifiers/02-graphite.svg" id="siteFavicon" />
     <script>
       try {
         const rawSnapshot = window.localStorage.getItem("mx_background_url_v1");
@@ -46,13 +47,17 @@
       } catch {}
     </script>
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/settings-themes.css" />
   </head>
   <body>
     <div class="page-bg" aria-hidden="true"></div>
     <div class="page-overlay" aria-hidden="true"></div>
 
     <header class="topbar">
-      <div class="brand-mini" id="siteTitleDisplay" title="点击更换背景">mx search</div>
+      <div class="brand-mini" id="siteTitleDisplay" title="点击更换背景">
+        <img id="brandIconDisplay" src="/icon-options/pixel-magnifiers/02-graphite.svg" alt="" />
+        <span id="brandTextDisplay">mx search</span>
+      </div>
       <div class="topbar-actions">
         <button class="sync-pill" id="syncStatus" type="button" aria-label="打开云端备份与同步" title="点击管理云端备份与同步">
           <span class="sync-dot" aria-hidden="true"></span>
@@ -136,20 +141,20 @@
 
     <aside class="settings-drawer hidden" id="settingsDrawer" aria-hidden="true">
       <nav class="settings-anchor-nav" id="settingsAnchorNav" aria-label="设置快速定位">
-        <div class="settings-anchor-nav-list">
-          <button class="settings-anchor-nav-button is-active" type="button" data-settings-anchor="basic">
+        <div class="settings-anchor-nav-list" role="tablist" aria-label="设置分类">
+          <button class="settings-anchor-nav-button is-active" type="button" role="tab" aria-controls="settingsBasicSection" aria-selected="true" data-settings-anchor="basic">
             <span>01</span>基础信息
           </button>
-          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="background">
+          <button class="settings-anchor-nav-button" type="button" role="tab" aria-controls="settingsBackgroundSection" aria-selected="false" data-settings-anchor="background">
             <span>02</span>背景图
           </button>
-          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="engines">
+          <button class="settings-anchor-nav-button" type="button" role="tab" aria-controls="settingsEnginesSection" aria-selected="false" data-settings-anchor="engines">
             <span>03</span>搜索引擎
           </button>
-          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="history">
+          <button class="settings-anchor-nav-button" type="button" role="tab" aria-controls="settingsHistorySection" aria-selected="false" data-settings-anchor="history">
             <span>04</span>搜索历史
           </button>
-          <button class="settings-anchor-nav-button" type="button" data-settings-anchor="categories">
+          <button class="settings-anchor-nav-button" type="button" role="tab" aria-controls="categorySection" aria-selected="false" data-settings-anchor="categories">
             <span>05</span>标签分类
           </button>
         </div>
@@ -169,7 +174,7 @@
 
       <form class="settings-form" id="settingsForm">
         <div class="settings-scroll" id="settingsScroll">
-          <section class="settings-section" id="settingsBasicSection" data-trail-section="基础信息">
+          <section class="settings-section" id="settingsBasicSection" role="tabpanel" data-trail-section="基础信息">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">01</span>
@@ -180,6 +185,15 @@
               <span>浏览器标题</span>
               <input id="siteTitleInput" type="text" maxlength="32" />
             </label>
+            <label class="field">
+              <span>左上角标志文字</span>
+              <input id="brandLabelInput" type="text" maxlength="24" placeholder="mx search" />
+            </label>
+            <fieldset class="icon-theme-picker">
+              <legend>网站图标与设置主题</legend>
+              <p>选择图标后，设置面板会使用同系列配色。</p>
+              <div class="icon-theme-grid" id="iconThemeGrid"></div>
+            </fieldset>
             <label class="field">
               <span>搜索框提示词</span>
               <input id="searchPlaceholderInput" type="text" maxlength="80" />
@@ -210,7 +224,7 @@
             </label>
           </section>
 
-          <section class="settings-section" id="settingsBackgroundSection" data-trail-section="背景图">
+          <section class="settings-section" id="settingsBackgroundSection" role="tabpanel" data-trail-section="背景图">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">02</span>
@@ -266,7 +280,7 @@
             </label>
           </section>
 
-          <section class="settings-section" id="settingsEnginesSection" data-trail-section="搜索引擎">
+          <section class="settings-section" id="settingsEnginesSection" role="tabpanel" data-trail-section="搜索引擎">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">03</span>
@@ -279,7 +293,7 @@
             </div>
           </section>
 
-          <section class="settings-section" id="settingsHistorySection" data-trail-section="搜索历史">
+          <section class="settings-section" id="settingsHistorySection" role="tabpanel" data-trail-section="搜索历史">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">04</span>
@@ -297,9 +311,10 @@
               </div>
               <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
             </div>
+            <div class="settings-history-list" id="settingsHistoryList"></div>
           </section>
 
-          <section class="settings-section" data-trail-section="标签分类" id="categorySection">
+          <section class="settings-section" data-trail-section="标签分类" id="categorySection" role="tabpanel">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">05</span>
