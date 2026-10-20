@@ -1,4 +1,5 @@
 ﻿const crypto = require("crypto");
+const fs = require("fs");
 const express = require("express");
 const path = require("path");
 const Database = require("better-sqlite3");
@@ -52,7 +53,10 @@ const app = express();
 app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY));
 app.use(setSecurityHeaders);
 app.use(express.json({ limit: "1mb" }));
-app.use(express.static(publicDir));
+// index.html is rendered with content-hashed asset URLs (?v=…); those URLs are cached for a year,
+// while the HTML and any unversioned file must revalidate (ETag), so deploys take effect immediately.
+app.get(["/", "/index.html"], sendVersionedIndex);
+app.use(express.static(publicDir, { index: false, cacheControl: false, setHeaders: setStaticCacheHeaders }));
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
@@ -450,9 +454,7 @@ app.delete("/api/history", requireAuth, (req, res) => {
   res.json(nextRecord);
 });
 
-app.get(/^(?!\/api\/).*/, (_req, res) => {
-  res.sendFile(path.join(publicDir, "index.html"));
-});
+app.get(/^(?!\/api\/).*/, sendVersionedIndex);
 
 // Express 5 passes listen errors (e.g. EADDRINUSE) to this callback instead of throwing.
 app.listen(PORT, HOST, (error) => {
@@ -726,6 +728,69 @@ function setSecurityHeaders(req, res, next) {
     res.setHeader("Strict-Transport-Security", "max-age=15552000");
   }
   next();
+}
+
+const ASSET_HASH_LENGTH = 10;
+const assetHashCache = new Map();
+let versionedIndexCache = { key: "", html: "" };
+
+function sendVersionedIndex(_req, res) {
+  try {
+    res.setHeader("Cache-Control", "no-cache");
+    res.type("html").send(renderVersionedIndex());
+  } catch (error) {
+    console.error("index render failed", error);
+    res.sendFile(path.join(publicDir, "index.html"));
+  }
+}
+
+// Rewrites local src/href in index.html to `/file?v=<content hash>`; re-renders only when a file's mtime changes.
+function renderVersionedIndex() {
+  const indexPath = path.join(publicDir, "index.html");
+  const indexStat = fs.statSync(indexPath);
+  const source = indexStat.mtimeMs === versionedIndexCache.indexMtime
+    ? versionedIndexCache.source
+    : fs.readFileSync(indexPath, "utf8");
+  const assetRefPattern = /\b(src|href)="(\/[^"?#]+)"/g;
+  const assetPaths = [...source.matchAll(assetRefPattern)].map((match) => match[2]);
+  const versions = assetPaths.map((assetPath) => [assetPath, getAssetHash(assetPath)]);
+  const key = `${indexStat.mtimeMs}|${versions.map(([, hash]) => hash).join(",")}`;
+  if (key !== versionedIndexCache.key) {
+    const versionMap = new Map(versions.filter(([, hash]) => hash));
+    const html = source.replace(assetRefPattern, (whole, attr, assetPath) =>
+      versionMap.has(assetPath) ? `${attr}="${assetPath}?v=${versionMap.get(assetPath)}"` : whole
+    );
+    versionedIndexCache = { key, html, source, indexMtime: indexStat.mtimeMs };
+  }
+  return versionedIndexCache.html;
+}
+
+function getAssetHash(assetPath) {
+  const filePath = path.join(publicDir, path.normalize(assetPath));
+  if (!filePath.startsWith(publicDir + path.sep)) {
+    return "";
+  }
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return "";
+  }
+  if (!stat.isFile()) {
+    return "";
+  }
+  const cached = assetHashCache.get(filePath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.hash;
+  }
+  const hash = crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex").slice(0, ASSET_HASH_LENGTH);
+  assetHashCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, hash });
+  return hash;
+}
+
+function setStaticCacheHeaders(res) {
+  const versioned = /[?&]v=[0-9a-f]+/.test(res.req?.originalUrl || "");
+  res.setHeader("Cache-Control", versioned ? "public, max-age=31536000, immutable" : "no-cache");
 }
 
 function parseTrustProxySetting(value) {

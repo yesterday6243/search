@@ -410,6 +410,16 @@ SQLite 数据库，当前包含：
 - 局部毛玻璃遮罩
 - 是否误引入浏览器原生 `alert/confirm/prompt`
 
+### 如果改静态资源引用（缓存与版本号）
+
+`server.js` 在返回 `index.html` 时，把其中所有本地 `src="/..."` / `href="/..."` 改写成 `/文件?v=<内容哈希前 10 位>`：
+
+- 带 `?v=` 的请求：`Cache-Control: public, max-age=31536000, immutable`（浏览器一年内不再请求）
+- `index.html` 与不带版本号的文件：`Cache-Control: no-cache`（每次用 ETag 校验，未变化返回 304）
+- 文件内容一变哈希就变，部署后用户自动拿到新文件；哈希按文件 mtime 缓存，开发时改文件即时生效
+- 新增资源时直接在 `index.html` 里写 `/xxx.js` 即可，不要手写 `?v=`
+- 只有 `index.html` 里的引用会加版本号；JS 里动态拼接的资源路径（如图标）走 `no-cache` 校验
+
 ### 如果加脚本、事件或外部资源（CSP）
 
 `server.js` 的 `setSecurityHeaders` 对所有响应设置 CSP 与常规安全头。新增代码时：
