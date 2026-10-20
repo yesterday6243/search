@@ -422,6 +422,22 @@ function bindEvents() {
 
   settingsForm.addEventListener("submit", saveSettings);
   settingsForm.addEventListener("input", handleSettingsInput);
+  settingsForm.addEventListener("change", (event) => {
+    if (event.target.matches("[data-range-for]")) {
+      applyRangeNumberInput(event.target, true);
+    }
+  });
+  settingsForm.addEventListener("focusout", (event) => {
+    if (event.target.matches("[data-range-for]")) {
+      applyRangeNumberInput(event.target, true);
+    }
+  });
+  settingsForm.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.matches("[data-range-for]")) {
+      event.preventDefault();
+      applyRangeNumberInput(event.target, true);
+    }
+  });
   settingsForm.addEventListener("click", handleSettingsClick);
   settingsScroll.addEventListener("scroll", handleSettingsScroll, { passive: true });
   settingsAnchorNav?.addEventListener("click", handleSettingsAnchorNavigation);
@@ -1500,7 +1516,30 @@ function normalizeOverlayOpacity(value) {
 }
 
 function updateBackgroundOpacityLabel(opacity) {
-  backgroundOpacityValue.textContent = `${normalizeOverlayOpacity(opacity)}%`;
+  syncRangeControl(backgroundOpacityInput, backgroundOpacityValue, normalizeOverlayOpacity(opacity));
+}
+
+function syncRangeControl(range, numberInput, value) {
+  range.value = String(value);
+  if (numberInput && document.activeElement !== numberInput) {
+    numberInput.value = String(value);
+  }
+  const progress = ((value - Number(range.min)) / (Number(range.max) - Number(range.min))) * 100;
+  range.style.setProperty("--range-progress", `${progress}%`);
+}
+
+function applyRangeNumberInput(numberInput, commit = false) {
+  const range = document.getElementById(numberInput.dataset.rangeFor);
+  if (!range) return;
+  let value = numberInput.valueAsNumber;
+  const min = Number(range.min);
+  const max = Number(range.max);
+  // Allow clearing the field and typing an intermediate digit without snapping it back.
+  if (!commit && (!Number.isFinite(value) || value < min || value > max || !Number.isInteger(value))) return;
+  value = Number.isFinite(value) ? Math.max(min, Math.min(max, Math.round(value))) : Number(range.value);
+  if (commit) numberInput.value = String(value);
+  range.value = String(value);
+  range.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function applyBackgroundOverlayOpacity(opacity) {
@@ -1536,7 +1575,7 @@ function updateTagOpacityLabel(opacity) {
   if (!tagOpacityValue) {
     return;
   }
-  tagOpacityValue.textContent = `${normalizeTagOpacity(opacity)}%`;
+  syncRangeControl(tagOpacityInput, tagOpacityValue, normalizeTagOpacity(opacity));
 }
 
 function applyTagOpacity(opacity) {
@@ -1552,7 +1591,7 @@ function updateSearchBarHeightLabel(height) {
   if (!searchBarHeightValue) {
     return;
   }
-  searchBarHeightValue.textContent = `${normalizeSearchBarHeight(height)}px`;
+  syncRangeControl(searchBarHeightInput, searchBarHeightValue, normalizeSearchBarHeight(height));
 }
 
 function applySearchBarHeight(height) {
@@ -1629,7 +1668,7 @@ function updateBingRecentCountLabel(value) {
   if (!backgroundBingRecentCountValue) {
     return;
   }
-  backgroundBingRecentCountValue.textContent = `${normalizeBingRecentCount(value)} 张`;
+  syncRangeControl(backgroundBingRecentCountInput, backgroundBingRecentCountValue, normalizeBingRecentCount(value));
 }
 
 function renderSeedPresetOptions(currentSeed = "") {
@@ -1740,17 +1779,19 @@ function renderSettingsDrawer() {
     .map((engine) => {
       const iconUrl = getFaviconUrlFromTemplate(engine.urlTemplate);
       return `
-        <article class="editor-card" data-engine-card="${escapeAttribute(engine.id)}">
+        <article class="editor-card settings-panel" data-engine-card="${escapeAttribute(engine.id)}">
           <div class="editor-card-header">
             <div class="engine-preview">
               ${buildIconMarkup(iconUrl, engine.name, "preview-icon")}
               <h4>${escapeHtml(engine.name || "未命名引擎")}</h4>
             </div>
-            <button class="ghost-button danger" type="button" data-remove-engine="${escapeAttribute(engine.id)}">删除</button>
-          </div>
-          <div class="radio-pill">
-            <input type="radio" name="defaultEngine" value="${escapeAttribute(engine.id)}" ${engine.id === settingsDraft.selectedEngineId ? "checked" : ""} />
-            <span>默认引擎</span>
+            <div class="engine-card-actions">
+              <label class="radio-pill">
+                <input type="radio" name="defaultEngine" value="${escapeAttribute(engine.id)}" ${engine.id === settingsDraft.selectedEngineId ? "checked" : ""} />
+                <span>默认引擎</span>
+              </label>
+              <button class="ghost-button danger" type="button" data-remove-engine="${escapeAttribute(engine.id)}">删除</button>
+            </div>
           </div>
           <div class="editor-grid-two">
             <label class="field">
@@ -1882,6 +1923,11 @@ function handleSettingsInput(event) {
   }
 
   const { target } = event;
+
+  if (target.matches("[data-range-for]")) {
+    applyRangeNumberInput(target);
+    return;
+  }
 
   if (target === siteTitleInput) {
     settingsDraft.settings.siteTitle = target.value;

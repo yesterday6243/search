@@ -174,57 +174,68 @@
 
       <form class="settings-form" id="settingsForm">
         <div class="settings-scroll" id="settingsScroll">
-          <section class="settings-section" id="settingsBasicSection" role="tabpanel" data-trail-section="基础信息">
+          <section class="settings-section settings-page" id="settingsBasicSection" role="tabpanel" data-trail-section="基础信息">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">01</span>
                 <h3>基础信息</h3>
               </div>
             </div>
-            <label class="field">
-              <span>浏览器标题</span>
-              <input id="siteTitleInput" type="text" maxlength="32" />
-            </label>
-            <label class="field">
-              <span>左上角标志文字</span>
-              <input id="brandLabelInput" type="text" maxlength="24" placeholder="mx search" />
-            </label>
-            <fieldset class="icon-theme-picker">
-              <legend>网站图标与设置主题</legend>
-              <p>选择图标后，设置面板会使用同系列配色。</p>
-              <div class="icon-theme-grid" id="iconThemeGrid"></div>
-            </fieldset>
-            <label class="field">
-              <span>搜索框提示词</span>
-              <input id="searchPlaceholderInput" type="text" maxlength="80" />
-            </label>
-            <label class="field" id="searchBarHeightField">
-              <span>搜索框高度（主页搜索框与右侧引擎按钮） <strong id="searchBarHeightValue">68px</strong></span>
-              <input
-                id="searchBarHeightInput"
-                type="range"
-                min="52"
-                max="96"
-                step="1"
-                value="68"
-              />
-              <small class="field-help">拖动后会同时调整搜索输入框高度，以及右侧搜索引擎按钮高度。</small>
-            </label>
-            <label class="field" id="tagOpacityField">
-              <span>标签透明度（卡片底色深浅） <strong id="tagOpacityValue">94%</strong></span>
-              <input
-                id="tagOpacityInput"
-                type="range"
-                min="35"
-                max="100"
-                step="1"
-                value="94"
-              />
-              <small class="field-help">数值越高标签卡片越实，数值越低越通透。</small>
-            </label>
+            <div class="settings-panel">
+              <div class="settings-panel-head"><h4>站点信息</h4><p>自定义主页的名称与搜索提示。</p></div>
+              <div class="settings-panel-body settings-field-grid">
+                <label class="field">
+                  <span>浏览器标题</span>
+                  <input id="siteTitleInput" type="text" maxlength="32" />
+                </label>
+                <label class="field">
+                  <span>左上角标志文字</span>
+                  <input id="brandLabelInput" type="text" maxlength="24" placeholder="mx search" />
+                </label>
+                <label class="field settings-field-wide">
+                  <span>搜索框提示词</span>
+                  <input id="searchPlaceholderInput" type="text" maxlength="80" />
+                </label>
+              </div>
+            </div>
+            <div class="settings-panel settings-theme-panel">
+              <div class="settings-panel-head"><h4 id="iconThemeHeading">网站图标与设置主题</h4><p>选择图标后，设置面板会使用同系列配色。</p></div>
+              <fieldset class="icon-theme-picker" aria-labelledby="iconThemeHeading">
+                <div class="icon-theme-grid" id="iconThemeGrid"></div>
+              </fieldset>
+            </div>
+            <div class="settings-panel">
+              <div class="settings-panel-head"><h4>显示偏好</h4><p>调整搜索框和首页标签的显示效果。</p></div>
+              <div class="settings-panel-body">
+                <div class="field settings-range-field" id="searchBarHeightField">
+                  <span><label for="searchBarHeightInput">搜索框高度（主页搜索框与右侧引擎按钮）</label><span class="settings-range-value"><input id="searchBarHeightValue" type="number" min="52" max="96" step="1" value="68" data-range-for="searchBarHeightInput" aria-label="搜索框高度数值" /><span>px</span></span></span>
+                  <input
+                    id="searchBarHeightInput"
+                    type="range"
+                    min="52"
+                    max="96"
+                    step="1"
+                    value="68"
+                  />
+                  <small class="field-help">拖动后会同时调整搜索输入框高度，以及右侧搜索引擎按钮高度。</small>
+                </div>
+                <div class="field settings-range-field" id="tagOpacityField">
+                  <span><label for="tagOpacityInput">标签透明度（卡片底色深浅）</label><span class="settings-range-value"><input id="tagOpacityValue" type="number" min="35" max="100" step="1" value="94" data-range-for="tagOpacityInput" aria-label="标签透明度数值" /><span>%</span></span></span>
+                  <input
+                    id="tagOpacityInput"
+                    type="range"
+                    min="35"
+                    max="100"
+                    step="1"
+                    value="94"
+                  />
+                  <small class="field-help">数值越高标签卡片越实，数值越低越通透。</small>
+                </div>
+              </div>
+            </div>
           </section>
 
-          <section class="settings-section" id="settingsBackgroundSection" role="tabpanel" data-trail-section="背景图">
+          <section class="settings-section settings-page" id="settingsBackgroundSection" role="tabpanel" data-trail-section="背景图">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">02</span>
@@ -232,55 +243,65 @@
               </div>
               <span>来自公共图床</span>
             </div>
-            <label class="field">
-              <span>背景来源</span>
-              <select id="backgroundProviderInput">
-                <option value="bing_hourly">Bing 每小时精选</option>
-                <option value="picsum_seed">Picsum 随机图库</option>
-                <option value="custom_url">自定义公共图片地址</option>
-              </select>
-            </label>
-            <label class="field" id="backgroundSeedField">
-              <span>随机种子（可自定义）</span>
-              <input id="backgroundSeedInput" type="text" maxlength="60" />
-              <small class="field-help">种子相同会生成同一系列随机图，后面会自动拼接小时标识来轮换。</small>
-            </label>
-            <label class="field" id="backgroundSeedPresetField">
-              <span>内置种子（含说明）</span>
-              <select id="backgroundSeedPresetInput"></select>
-              <small class="field-help" id="backgroundSeedPresetHint">选择后会自动填充到上方随机种子。</small>
-            </label>
-            <label class="field" id="backgroundBingRecentCountField">
-              <span>Bing 最近图片池（1-8 张） <strong id="backgroundBingRecentCountValue">8 张</strong></span>
-              <input
-                id="backgroundBingRecentCountInput"
-                type="range"
-                min="1"
-                max="8"
-                step="1"
-                value="8"
-              />
-              <small class="field-help">数值越大，Bing 每小时/手动切换时可选的最近图片范围越大。</small>
-            </label>
-            <label class="field" id="backgroundUrlField">
-              <span>图片地址</span>
-              <input id="backgroundCustomUrlInput" type="url" placeholder="https://example.com/bg.jpg" />
-            </label>
-            <label class="field" id="backgroundOpacityField">
-              <span>背景遮罩透明度（背景清晰度） <strong id="backgroundOpacityValue">100%</strong></span>
-              <input
-                id="backgroundOpacityInput"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value="100"
-              />
-              <small class="field-help">数值越高背景越柔和，数值越低背景越清晰。</small>
-            </label>
+            <div class="settings-panel">
+              <div class="settings-panel-head"><h4>图片来源</h4><p>使用每日精选、随机图库或自己的图片。</p></div>
+              <div class="settings-panel-body">
+                <label class="field">
+                  <span>背景来源</span>
+                  <select id="backgroundProviderInput">
+                    <option value="bing_hourly">Bing 每小时精选</option>
+                    <option value="picsum_seed">Picsum 随机图库</option>
+                    <option value="custom_url">自定义公共图片地址</option>
+                  </select>
+                </label>
+                <label class="field" id="backgroundSeedField">
+                  <span>随机种子（可自定义）</span>
+                  <input id="backgroundSeedInput" type="text" maxlength="60" />
+                  <small class="field-help">种子相同会生成同一系列随机图，后面会自动拼接小时标识来轮换。</small>
+                </label>
+                <label class="field" id="backgroundSeedPresetField">
+                  <span>内置种子（含说明）</span>
+                  <select id="backgroundSeedPresetInput"></select>
+                  <small class="field-help" id="backgroundSeedPresetHint">选择后会自动填充到上方随机种子。</small>
+                </label>
+                <div class="field settings-range-field" id="backgroundBingRecentCountField">
+                  <span><label for="backgroundBingRecentCountInput">Bing 最近图片池（1-8 张）</label><span class="settings-range-value"><input id="backgroundBingRecentCountValue" type="number" min="1" max="8" step="1" value="8" data-range-for="backgroundBingRecentCountInput" aria-label="Bing 图片池张数" /><span>张</span></span></span>
+                  <input
+                    id="backgroundBingRecentCountInput"
+                    type="range"
+                    min="1"
+                    max="8"
+                    step="1"
+                    value="8"
+                  />
+                  <small class="field-help">数值越大，Bing 每小时/手动切换时可选的最近图片范围越大。</small>
+                </div>
+                <label class="field" id="backgroundUrlField">
+                  <span>图片地址</span>
+                  <input id="backgroundCustomUrlInput" type="url" placeholder="https://example.com/bg.jpg" />
+                </label>
+              </div>
+            </div>
+            <div class="settings-panel">
+              <div class="settings-panel-head"><h4>背景清晰度</h4><p>通过遮罩调整图片与文字之间的对比。</p></div>
+              <div class="settings-panel-body">
+                <div class="field settings-range-field" id="backgroundOpacityField">
+                  <span><label for="backgroundOpacityInput">背景遮罩透明度（背景清晰度）</label><span class="settings-range-value"><input id="backgroundOpacityValue" type="number" min="0" max="100" step="1" value="100" data-range-for="backgroundOpacityInput" aria-label="背景遮罩透明度数值" /><span>%</span></span></span>
+                  <input
+                    id="backgroundOpacityInput"
+                    type="range"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value="100"
+                  />
+                  <small class="field-help">数值越高背景越柔和，数值越低背景越清晰。</small>
+                </div>
+              </div>
+            </div>
           </section>
 
-          <section class="settings-section" id="settingsEnginesSection" role="tabpanel" data-trail-section="搜索引擎">
+          <section class="settings-section settings-page" id="settingsEnginesSection" role="tabpanel" data-trail-section="搜索引擎">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">03</span>
@@ -293,7 +314,7 @@
             </div>
           </section>
 
-          <section class="settings-section" id="settingsHistorySection" role="tabpanel" data-trail-section="搜索历史">
+          <section class="settings-section settings-page" id="settingsHistorySection" role="tabpanel" data-trail-section="搜索历史">
             <div class="settings-title-row">
               <div class="settings-title-main">
                 <span class="settings-anchor-badge">04</span>
@@ -301,17 +322,19 @@
               </div>
               <span id="historyCountLabel">最近保留 100 条</span>
             </div>
-            <div class="history-settings">
-              <div class="history-settings-main">
-                <label class="field">
-                  <span>本地保留条数</span>
-                  <input id="historyLimitInput" type="number" inputmode="numeric" min="1" max="500" step="1" />
-                </label>
-                <p>搜索历史只保存在当前浏览器。修改这里会立即影响本机保留条数，不会上传后端。</p>
+            <div class="settings-panel">
+              <div class="history-settings">
+                <div class="history-settings-main">
+                  <label class="field">
+                    <span>本地保留条数</span>
+                    <input id="historyLimitInput" type="number" inputmode="numeric" min="1" max="500" step="1" />
+                  </label>
+                </div>
+                <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
               </div>
-              <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
+              <p class="settings-panel-note">搜索历史只保存在当前浏览器。修改这里会立即影响本机保留条数，不会上传后端。</p>
             </div>
-            <div class="settings-history-list" id="settingsHistoryList"></div>
+            <div class="settings-history-list settings-panel" id="settingsHistoryList"></div>
           </section>
 
           <section class="settings-section" data-trail-section="标签分类" id="categorySection" role="tabpanel">

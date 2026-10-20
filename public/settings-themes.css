@@ -644,10 +644,350 @@
   }
 }
 
+/* Shared page panels follow the category editor's compact spacing. */
+.settings-drawer[data-color-theme] .settings-page {
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.settings-drawer[data-color-theme] .settings-page:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.settings-drawer[data-color-theme] .settings-page > .settings-title-row {
+  min-height: 36px;
+  margin: 0 0 2px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.settings-drawer[data-color-theme] .settings-page .settings-title-row h3 {
+  font-size: 20px;
+  line-height: 1.4;
+}
+.settings-drawer[data-color-theme] .settings-page .settings-title-row > span {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.settings-drawer[data-color-theme] .settings-panel {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--theme-line);
+  border-radius: 14px;
+  background: #ffffffd9;
+  box-shadow: 0 1px 2px #1a2b3a0d;
+}
+.settings-drawer[data-color-theme] .settings-panel-head {
+  display: grid;
+  gap: 4px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-panel-head h4 {
+  margin: 0;
+  color: var(--theme-ink);
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+.settings-drawer[data-color-theme] :is(.settings-panel-head p, .settings-panel-note) {
+  margin: 0;
+  color: var(--theme-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.settings-drawer[data-color-theme] .settings-panel-body {
+  padding: 16px 18px 18px;
+}
+.settings-drawer[data-color-theme] .settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.settings-drawer[data-color-theme] .settings-field-grid > .field {
+  margin: 0;
+}
+.settings-drawer[data-color-theme] .settings-field-wide {
+  grid-column: 1 / -1;
+}
+.settings-drawer[data-color-theme] .settings-page .field {
+  min-width: 0;
+  gap: 8px;
+}
+.settings-drawer[data-color-theme] .settings-page .field > span {
+  color: var(--theme-ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.settings-drawer[data-color-theme] .settings-page .field :is(input:not([type="range"]), select) {
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.settings-drawer[data-color-theme] .settings-page .field + .field {
+  margin-top: 18px;
+}
+.settings-drawer[data-color-theme] .settings-field-grid > .field + .field,
+.settings-drawer[data-color-theme] .settings-page .editor-grid-two > .field + .field {
+  margin-top: 0;
+}
+.settings-drawer[data-color-theme] .settings-range-field > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-drawer[data-color-theme] .settings-range-value {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+.settings-drawer[data-color-theme] .settings-range-value > span {
+  min-height: 0;
+  color: var(--theme-muted);
+  font-size: 12px;
+}
+.settings-drawer[data-color-theme] .settings-page .settings-range-value input {
+  width: 72px;
+  min-height: 36px;
+  padding: 0 8px;
+  border-radius: 8px;
+  text-align: center;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 32px;
+  min-height: 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--theme-accent) var(--range-progress, 0%), var(--theme-line) var(--range-progress, 0%));
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--theme-line);
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"]::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -7px;
+  border: 3px solid var(--theme-accent);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 4px #1a2b3a26;
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"]::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 3px solid var(--theme-accent);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 4px #1a2b3a26;
+}
+.settings-drawer[data-color-theme] .settings-range-field > input[type="range"]:focus-visible {
+  outline: 2px solid var(--theme-accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.settings-drawer[data-color-theme] .settings-range-field:focus-within .settings-range-value input {
+  border-color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] .settings-range-field strong {
+  flex: 0 0 auto;
+  min-width: 54px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: var(--theme-accent);
+  background: color-mix(in srgb, var(--theme-accent) 8%, white);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.settings-drawer[data-color-theme] .settings-theme-panel .icon-theme-picker {
+  margin: 0;
+  padding: 16px 18px 18px;
+}
+.settings-drawer[data-color-theme] .settings-theme-panel .icon-theme-choice {
+  border-radius: 10px;
+  padding: 12px 8px;
+  gap: 8px;
+}
+.settings-drawer[data-color-theme] .settings-page .ghost-button {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-drawer[data-color-theme] #engineEditor .editor-card-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--theme-line);
+}
+.settings-drawer[data-color-theme] #engineEditor .engine-preview h4 {
+  font-size: 15px;
+  font-weight: 750;
+}
+.settings-drawer[data-color-theme] .engine-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-drawer[data-color-theme] #engineEditor .radio-pill {
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.settings-drawer[data-color-theme] #engineEditor .radio-pill input {
+  margin: 0;
+  accent-color: var(--theme-accent);
+}
+.settings-drawer[data-color-theme] #engineEditor .editor-grid-two {
+  grid-template-columns: minmax(140px, 0.7fr) minmax(0, 1.7fr);
+  gap: 16px;
+  margin: 0;
+  padding: 16px 18px 18px;
+}
+.settings-drawer[data-color-theme] .settings-page .section-bottom-actions {
+  margin: 0;
+}
+.settings-drawer[data-color-theme] .settings-page .history-settings {
+  padding: 16px 18px 0;
+  align-items: flex-end;
+  gap: 16px;
+}
+.settings-drawer[data-color-theme] .settings-page .history-settings-main {
+  min-width: 0;
+}
+.settings-drawer[data-color-theme] .settings-page .history-settings > .ghost-button {
+  min-height: 42px;
+}
+.settings-drawer[data-color-theme] .settings-panel-note {
+  padding: 10px 18px 18px;
+}
+.settings-drawer[data-color-theme] .settings-page .settings-history-list {
+  display: block;
+  overflow: hidden;
+}
+.settings-drawer[data-color-theme] .settings-page .settings-history-item {
+  gap: 16px;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--theme-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.settings-drawer[data-color-theme] .settings-history-item:last-child {
+  border-bottom: 0;
+}
+.settings-drawer[data-color-theme] .settings-history-detail strong {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 650;
+}
+.settings-drawer[data-color-theme] .settings-history-detail span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-drawer[data-color-theme] .settings-history-list > .editor-tip {
+  padding: 28px 18px;
+  color: var(--theme-muted);
+  font-size: 14px;
+  text-align: center;
+}
+.settings-drawer[data-color-theme] .settings-anchor-nav-button {
+  min-height: 46px;
+  gap: 10px;
+  border-radius: 10px;
+  background: transparent;
+  line-height: 1.4;
+}
+.settings-drawer[data-color-theme] .settings-anchor-nav-button span {
+  flex: 0 0 34px;
+}
+.settings-drawer[data-color-theme] .settings-anchor-nav-button:hover {
+  background: #ffffff57;
+}
+.settings-drawer[data-color-theme] .settings-anchor-nav-button.is-active {
+  background: #fffffff2;
+}
+@media (max-width: 760px) {
+  .settings-drawer[data-color-theme] .settings-field-grid,
+  .settings-drawer[data-color-theme] #engineEditor .editor-grid-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .settings-drawer[data-color-theme] .settings-page > .settings-title-row {
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .settings-drawer[data-color-theme] #engineEditor .editor-card-header {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .settings-drawer[data-color-theme] .engine-card-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .settings-drawer[data-color-theme] .settings-page .history-settings {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 10px;
+  }
+  .settings-drawer[data-color-theme] .history-settings > .ghost-button {
+    width: auto;
+  }
+  .settings-drawer[data-color-theme] .settings-page .settings-history-item {
+    align-items: center;
+    gap: 10px;
+  }
+  .settings-drawer[data-color-theme] .settings-anchor-nav-button {
+    min-height: 40px;
+    border-radius: 8px;
+  }
+  .settings-drawer[data-color-theme] .settings-anchor-nav-button span {
+    flex-basis: 24px;
+  }
+}
+
 /* Phones: 16px form controls stop iOS Safari from zooming the page on focus.
    Selector matches the specificity of the theme rules above so it wins. */
 @media (max-width: 760px) {
-  .settings-drawer[data-color-theme] :is(input, select, textarea, .link-row-input, .link-row-url .link-row-input, .link-table-search input) {
+  .settings-drawer[data-color-theme] :is(input, select, textarea, .link-row-input, .link-row-url .link-row-input, .link-table-search input),
+  .settings-drawer[data-color-theme] .settings-page .field :is(input:not([type="range"]), select) {
     font-size: 16px;
   }
 }
