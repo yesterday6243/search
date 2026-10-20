@@ -293,6 +293,14 @@
                 <button class="ghost-button danger" id="clearHistoryButton" type="button">清空历史</button>
               </div>
               <p class="settings-panel-note">搜索历史只保存在当前浏览器。修改这里会立即影响本机保留条数，不会上传后端。</p>
+              <label class="category-switch settings-suggest-switch">
+                <input id="searchSuggestionsInput" type="checkbox" role="switch" checked />
+                <span class="category-switch-track" aria-hidden="true"></span>
+                <span class="category-switch-text">
+                  <strong>搜索联想</strong>
+                  <small>输入时显示当前搜索引擎的联想词（输入内容会发送给该引擎）</small>
+                </span>
+              </label>
             </div>
             <div class="settings-history-list settings-panel" id="settingsHistoryList"></div>
           </section>

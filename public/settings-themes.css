@@ -1723,3 +1723,7 @@
 .auth-modal[data-color-theme] .primary-button.is-danger:hover {
   background: #b42318;
 }
+
+.settings-drawer[data-color-theme] .settings-suggest-switch {
+  margin-top: 14px;
+}

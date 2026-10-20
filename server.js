@@ -357,6 +357,33 @@ app.post("/api/icon-cache/discover", requireAuth, async (req, res) => {
   }
 });
 
+// Search suggestions proxy (the page's CSP only allows same-origin requests).
+// Upstream hosts are fixed — this is not a general-purpose proxy.
+app.get("/api/suggest", async (req, res) => {
+  const query = sanitizeText(req.query?.q, "").trim().slice(0, SUGGEST_QUERY_MAX_LENGTH);
+  if (!query) {
+    res.json({ query: "", suggestions: [] });
+    return;
+  }
+  if (!consumeSuggestQuota(req.ip, Date.now())) {
+    res.status(429).json({ message: "请求过于频繁", suggestions: [] });
+    return;
+  }
+
+  const providers = getSuggestProviderOrder(sanitizeText(req.query?.engine, "").toLowerCase());
+  for (const provider of providers) {
+    try {
+      const suggestions = await fetchSuggestions(provider, query);
+      res.set("Cache-Control", "private, max-age=300");
+      res.json({ query, provider, suggestions });
+      return;
+    } catch (error) {
+      console.warn(`suggest via ${provider} failed:`, error?.message || error);
+    }
+  }
+  res.json({ query, suggestions: [] });
+});
+
 app.post("/api/history", requireAuth, (req, res) => {
   const query = sanitizeText(req.body?.query, "").slice(0, 120);
   const engineId = sanitizeText(req.body?.engineId, "");
@@ -579,7 +606,80 @@ setInterval(() => {
       loginFailures.delete(key);
     }
   }
+  for (const [key, entry] of suggestQuota) {
+    if (now - entry.windowStart > SUGGEST_RATE_WINDOW_MS) {
+      suggestQuota.delete(key);
+    }
+  }
 }, 5 * 60 * 1000).unref();
+
+const SUGGEST_QUERY_MAX_LENGTH = 100;
+const SUGGEST_MAX_RESULTS = 8;
+const SUGGEST_TIMEOUT_MS = 3000;
+const SUGGEST_CACHE_TTL_MS = 10 * 60 * 1000;
+const SUGGEST_CACHE_MAX_ENTRIES = 500;
+const SUGGEST_RATE_WINDOW_MS = 60 * 1000;
+const SUGGEST_RATE_MAX = 120;
+// All of these answer in OpenSearch JSON: ["query", ["suggestion", ...]].
+const SUGGEST_PROVIDERS = {
+  google: (q) => `https://suggestqueries.google.com/complete/search?client=firefox&hl=zh-CN&q=${encodeURIComponent(q)}`,
+  bing: (q) => `https://api.bing.com/osjson.aspx?query=${encodeURIComponent(q)}`,
+  baidu: (q) => `https://suggestion.baidu.com/su?action=opensearch&ie=utf-8&wd=${encodeURIComponent(q)}`,
+  duckduckgo: (q) => `https://duckduckgo.com/ac/?type=list&q=${encodeURIComponent(q)}`,
+};
+const suggestCache = new Map();
+const suggestQuota = new Map();
+
+// The current search engine's own provider first; Bing / Baidu as fallbacks.
+function getSuggestProviderOrder(engineHost) {
+  const primary =
+    ["google", "baidu", "duckduckgo", "bing"].find((name) => engineHost.includes(name)) || "bing";
+  return [primary, "bing", "baidu"].filter((name, index, list) => list.indexOf(name) === index);
+}
+
+async function fetchSuggestions(provider, query) {
+  const cacheKey = `${provider}|${query.toLowerCase()}`;
+  const cached = suggestCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < SUGGEST_CACHE_TTL_MS) {
+    return cached.suggestions;
+  }
+
+  const response = await fetch(SUGGEST_PROVIDERS[provider](query), {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; mx-search/1.0)", Accept: "application/json, text/javascript" },
+    signal: AbortSignal.timeout(SUGGEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`status ${response.status}`);
+  }
+  const payload = JSON.parse(await readResponseTextWithLimit(response, 64 * 1024));
+  const list = Array.isArray(payload?.[1]) ? payload[1] : [];
+  const suggestions = list
+    .filter((item) => typeof item === "string")
+    .map((item) => item.trim().slice(0, 120))
+    .filter((item, index, all) => item && all.indexOf(item) === index)
+    .slice(0, SUGGEST_MAX_RESULTS);
+
+  suggestCache.delete(cacheKey);
+  suggestCache.set(cacheKey, { at: Date.now(), suggestions });
+  while (suggestCache.size > SUGGEST_CACHE_MAX_ENTRIES) {
+    suggestCache.delete(suggestCache.keys().next().value);
+  }
+  return suggestions;
+}
+
+function consumeSuggestQuota(ip, now) {
+  const key = String(ip || "unknown");
+  let entry = suggestQuota.get(key);
+  if (!entry || now - entry.windowStart > SUGGEST_RATE_WINDOW_MS) {
+    entry = { windowStart: now, count: 0 };
+    suggestQuota.set(key, entry);
+  }
+  entry.count += 1;
+  if (suggestQuota.size > LOGIN_LIMITER_MAX_KEYS) {
+    suggestQuota.delete(suggestQuota.keys().next().value);
+  }
+  return entry.count <= SUGGEST_RATE_MAX;
+}
 
 // Scripts: only our own files (no inline JS / eval). Styles allow inline `style=""` attributes,
 // which templates use for CSS variables. Images can come from any site (favicons, backgrounds).
@@ -1158,6 +1258,9 @@ function sanitizeSettings(input, fallback) {
       source.tagOpacity,
       fallback.tagOpacity
     ),
+    searchSuggestions: typeof source.searchSuggestions === "boolean"
+      ? source.searchSuggestions
+      : fallback.searchSuggestions !== false,
     background: {
       provider,
       seed: sanitizeText(background.seed, fallback.background.seed).slice(0, 60) || fallback.background.seed,

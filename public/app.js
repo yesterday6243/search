@@ -63,6 +63,7 @@ const addEngineButton = document.getElementById("addEngineButton");
 const clearHistoryButton = document.getElementById("clearHistoryButton");
 const historyCountLabel = document.getElementById("historyCountLabel");
 const historyLimitInput = document.getElementById("historyLimitInput");
+const searchSuggestionsInput = document.getElementById("searchSuggestionsInput");
 const settingsHistoryList = document.getElementById("settingsHistoryList");
 const engineEditor = document.getElementById("engineEditor");
 const categoryEditor = document.getElementById("categoryEditor");
@@ -181,6 +182,7 @@ const GUEST_STATE = {
     subtitle: "搜索网页",
     searchBarHeight: 68,
     tagOpacity: 94,
+    searchSuggestions: true,
     background: {
       provider: "bing_hourly",
       seed: "linen-warm",
@@ -257,6 +259,15 @@ let homeTagSearchQuery = "";
 const tagSearchTermsCache = new Map();
 let syncModalBusy = false;
 let syncModalBackups = [];
+// Search suggestions (engine autocomplete via /api/suggest) and dropdown keyboard state.
+const SEARCH_SUGGEST_DEBOUNCE_MS = 140;
+const SEARCH_DROPDOWN_HISTORY_WITH_QUERY = 4;
+const searchSuggestCache = new Map();
+let searchSuggestTimer = 0;
+let searchSuggestController = null;
+let searchDropdownTypedText = "";
+let searchDropdownActiveIndex = -1;
+let lastRenderedSuggestions = [];
 let syncModalBackupLimit = 10;
 let syncModalLoaded = false;
 let settingsTrailFrame = 0;
@@ -338,6 +349,7 @@ function bindEvents() {
   searchForm.addEventListener("submit", handleSearch);
   searchBar?.addEventListener("pointerdown", handleSearchBarPointerDown);
   searchInput.addEventListener("focus", () => renderHistoryList(searchInput.value));
+  searchInput.addEventListener("keydown", handleSearchDropdownKeydown);
   searchInput.addEventListener("input", () => {
     updateSearchClearButton();
     renderHistoryList(searchInput.value);
@@ -493,6 +505,21 @@ function bindEvents() {
   });
 
   historyPanel.addEventListener("click", (event) => {
+    const suggestion = event.target.closest("[data-suggestion]");
+    if (suggestion) {
+      searchInput.value = suggestion.dataset.suggestion || "";
+      updateSearchClearButton();
+      // ↖ fills the input and keeps suggesting from there; the row itself searches right away.
+      if (event.target.closest("[data-suggestion-fill]")) {
+        searchInput.focus();
+        renderHistoryList(searchInput.value);
+        return;
+      }
+      closeMenus();
+      searchForm.requestSubmit();
+      return;
+    }
+
     const item = event.target.closest("[data-history-id]");
     if (!item) {
       return;
@@ -512,7 +539,7 @@ function bindEvents() {
 
   historyPanel.addEventListener("keydown", (event) => {
     const item = event.target instanceof Element ? event.target : null;
-    if (!item?.matches("[data-history-id]") || (event.key !== "Enter" && event.key !== " ")) {
+    if (!item?.matches("[data-history-id], [data-suggestion]") || (event.key !== "Enter" && event.key !== " ")) {
       return;
     }
     event.preventDefault();
@@ -1598,16 +1625,40 @@ function renderHistoryList(keyword = "") {
     return;
   }
 
-  const query = keyword.trim().toLowerCase();
-  const entries = appState.history
-    .filter((entry) => !query || entry.query.toLowerCase().includes(query));
+  searchDropdownTypedText = keyword;
+  searchDropdownActiveIndex = -1;
+  const trimmed = keyword.trim();
+  const query = trimmed.toLowerCase();
 
   if (document.activeElement !== searchInput) {
     historyPanel.classList.add("hidden");
     return;
   }
 
-  if (!entries.length) {
+  const matchingHistory = appState.history.filter((entry) => !query || entry.query.toLowerCase().includes(query));
+  const historyEntries = query ? matchingHistory.slice(0, SEARCH_DROPDOWN_HISTORY_WITH_QUERY) : matchingHistory;
+  const suggestionsEnabled = Boolean(trimmed) && appState.settings.searchSuggestions !== false;
+  const historyTexts = new Set(historyEntries.map((entry) => entry.query.toLowerCase()));
+  // Until this query's results arrive, keep showing the previous list's still-matching items (no flicker).
+  const cachedSuggestions = searchSuggestCache.get(getSuggestCacheKey(trimmed));
+  const previousSuggestions = lastRenderedSuggestions;
+  const sourceSuggestions = cachedSuggestions
+    || previousSuggestions.filter((item) => item.toLowerCase().includes(query));
+  const suggestions = suggestionsEnabled
+    ? sourceSuggestions.filter((item) => item.toLowerCase() !== query && !historyTexts.has(item.toLowerCase()))
+    : [];
+  lastRenderedSuggestions = suggestions;
+
+  if (suggestionsEnabled) {
+    queueSearchSuggestions(trimmed);
+  }
+
+  if (!historyEntries.length && !suggestions.length) {
+    const awaitingSuggestions = suggestionsEnabled && !cachedSuggestions && previousSuggestions.length;
+    if (awaitingSuggestions && !historyPanel.classList.contains("hidden")) {
+      lastRenderedSuggestions = previousSuggestions;
+      return;
+    }
     if (query) {
       historyPanel.classList.add("hidden");
       return;
@@ -1617,7 +1668,7 @@ function renderHistoryList(keyword = "") {
     return;
   }
 
-  historyPanel.innerHTML = entries
+  const historyMarkup = historyEntries
     .map((entry) => {
       const engine = appState.engines.find((item) => item.id === entry.engineId);
       const iconUrl = engine ? getFaviconUrlFromTemplate(engine.urlTemplate) : "";
@@ -1634,8 +1685,124 @@ function renderHistoryList(keyword = "") {
     })
     .join("");
 
+  const suggestionMarkup = suggestions
+    .map(
+      (text) => `
+        <div class="history-item suggestion-item" role="button" tabindex="0" data-suggestion="${escapeAttribute(text)}" title="搜索：${escapeAttribute(text)}">
+          <span class="suggestion-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13Zm0 1.8a4.7 4.7 0 1 0 0 9.4 4.7 4.7 0 0 0 0-9.4Zm5.61 10.04 3.39 3.39-1.27 1.27-3.39-3.39 1.27-1.27Z" /></svg>
+          </span>
+          <div class="history-text">
+            <div class="history-query suggestion-text">${highlightSuggestion(text, trimmed)}</div>
+          </div>
+          <button class="suggestion-fill-button" type="button" data-suggestion-fill aria-label="填入搜索框" title="填入搜索框">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7h9v2H10.41l8.3 8.29-1.42 1.42L9 10.41V16H7V7Z" /></svg>
+          </button>
+        </div>
+      `
+    )
+    .join("");
+
+  historyPanel.innerHTML = historyMarkup + suggestionMarkup;
   historyPanel.classList.remove("hidden");
   engineMenu.classList.add("hidden");
+}
+
+// Google-style: the part you typed stays regular, the completion is bold.
+function highlightSuggestion(text, typed) {
+  if (typed && text.toLowerCase().startsWith(typed.toLowerCase())) {
+    return `<span class="suggestion-typed">${escapeHtml(text.slice(0, typed.length))}</span><strong>${escapeHtml(text.slice(typed.length))}</strong>`;
+  }
+  return escapeHtml(text);
+}
+
+function getSuggestCacheKey(query) {
+  const engine = getActiveEngine();
+  return `${getHostFromTemplate(engine?.urlTemplate || "")}|${query.toLowerCase()}`;
+}
+
+function queueSearchSuggestions(query) {
+  window.clearTimeout(searchSuggestTimer);
+  if (searchSuggestCache.has(getSuggestCacheKey(query))) {
+    return;
+  }
+  searchSuggestTimer = window.setTimeout(() => {
+    void fetchSearchSuggestions(query);
+  }, SEARCH_SUGGEST_DEBOUNCE_MS);
+}
+
+async function fetchSearchSuggestions(query) {
+  searchSuggestController?.abort();
+  const controller = new AbortController();
+  searchSuggestController = controller;
+  const cacheKey = getSuggestCacheKey(query);
+  try {
+    const engineHost = getHostFromTemplate(getActiveEngine()?.urlTemplate || "");
+    const payload = await fetchJson(
+      `/api/suggest?q=${encodeURIComponent(query)}&engine=${encodeURIComponent(engineHost)}`,
+      { signal: controller.signal }
+    );
+    const suggestions = Array.isArray(payload?.suggestions) ? payload.suggestions.filter((item) => typeof item === "string") : [];
+    searchSuggestCache.set(cacheKey, suggestions);
+    if (searchSuggestCache.size > 200) {
+      searchSuggestCache.delete(searchSuggestCache.keys().next().value);
+    }
+    // Only repaint if the user is still looking at this query (and not arrowing through rows).
+    if (searchDropdownTypedText.trim() === query && searchDropdownActiveIndex === -1 && document.activeElement === searchInput) {
+      renderHistoryList(searchDropdownTypedText);
+    }
+  } catch (error) {
+    if (error?.name !== "AbortError") {
+      console.warn("search suggestions unavailable", error);
+    }
+  } finally {
+    if (searchSuggestController === controller) {
+      searchSuggestController = null;
+    }
+  }
+}
+
+function getSearchDropdownRows() {
+  return historyPanel.classList.contains("hidden")
+    ? []
+    : Array.from(historyPanel.querySelectorAll("[data-history-id], [data-suggestion]"));
+}
+
+function getSearchDropdownRowText(row) {
+  return row.dataset.suggestion ?? row.dataset.query ?? "";
+}
+
+// ↑/↓ preview each row's text in the input (like the browser address bar), Esc restores what was typed.
+function handleSearchDropdownKeydown(event) {
+  const rows = getSearchDropdownRows();
+  if (event.key === "Escape") {
+    if (searchDropdownActiveIndex !== -1) {
+      searchInput.value = searchDropdownTypedText;
+      updateSearchClearButton();
+    }
+    closeMenus();
+    return;
+  }
+  if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || !rows.length || event.isComposing) {
+    return;
+  }
+  event.preventDefault();
+  const step = event.key === "ArrowDown" ? 1 : -1;
+  let next = searchDropdownActiveIndex + step;
+  if (next >= rows.length) {
+    next = -1;
+  } else if (next < -1) {
+    next = rows.length - 1;
+  }
+  searchDropdownActiveIndex = next;
+  rows.forEach((row, index) => row.classList.toggle("is-active", index === next));
+  if (next === -1) {
+    searchInput.value = searchDropdownTypedText;
+  } else {
+    searchInput.value = getSearchDropdownRowText(rows[next]);
+    rows[next].scrollIntoView({ block: "nearest" });
+  }
+  updateSearchClearButton();
 }
 
 function renderEngineMenu() {
@@ -1930,6 +2097,9 @@ function renderSettingsDrawer() {
   if (historyLimitInput) {
     historyLimitInput.value = String(historyLimit);
   }
+  if (searchSuggestionsInput) {
+    searchSuggestionsInput.checked = settingsDraft.settings.searchSuggestions !== false;
+  }
   backgroundProviderInput.value = settingsDraft.settings.background.provider;
   backgroundSeedInput.value = settingsDraft.settings.background.seed;
   backgroundCustomUrlInput.value = settingsDraft.settings.background.customUrl;
@@ -2134,6 +2304,11 @@ function handleSettingsInput(event) {
     settingsDraft.settings.tagOpacity = opacity;
     updateTagOpacityLabel(opacity);
     applyTagOpacity(opacity);
+    return;
+  }
+
+  if (target === searchSuggestionsInput) {
+    settingsDraft.settings.searchSuggestions = target.checked;
     return;
   }
 
@@ -4257,6 +4432,7 @@ function sanitizeCachedStateSnapshot(state) {
           : "搜索网页",
       searchBarHeight: normalizeSearchBarHeight(settingsSource.searchBarHeight),
       tagOpacity: normalizeTagOpacity(settingsSource.tagOpacity),
+      searchSuggestions: settingsSource.searchSuggestions !== false,
       background: {
         provider:
           backgroundSource.provider === "custom_url" ||

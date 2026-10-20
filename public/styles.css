@@ -2126,6 +2126,69 @@ body.is-tag-dragging {
   background: rgba(28, 34, 49, 0.07);
 }
 
+/* Engine suggestions: single-line rows under the history matches. */
+.history-item.suggestion-item {
+  height: 48px;
+}
+
+.history-item.is-active,
+.history-item:focus-visible {
+  background: rgba(44, 58, 94, 0.06);
+}
+
+.suggestion-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: #9aa0a6;
+}
+
+.suggestion-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.suggestion-text {
+  font-weight: 400;
+}
+
+.suggestion-text strong {
+  font-weight: 700;
+}
+
+.suggestion-typed {
+  color: var(--text-soft);
+}
+
+.suggestion-fill-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #9aa0a6;
+  background: transparent;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.suggestion-fill-button svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.suggestion-fill-button:hover,
+.suggestion-fill-button:focus-visible {
+  color: var(--text-main);
+  border-color: rgba(28, 34, 49, 0.22);
+  outline: none;
+}
+
 /* Clear (×): plain icon like Google's — no circle, no outline, no rotation. */
 .search-clear-button {
   display: grid;

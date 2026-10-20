@@ -456,6 +456,39 @@
 - 多个候选时优先 SVG，其次按 `sizes` 取最大尺寸
 - 成功结果写入服务端共享图标缓存（覆盖旧值）
 
+## 6.1 搜索联想接口
+
+### `GET /api/suggest?q=<关键词>&engine=<搜索引擎域名>`
+
+用途：
+
+- 输入时返回搜索引擎联想词。页面 CSP 只允许同源请求，所以由后端代理
+
+不需要登录。
+
+参数：
+
+- `q`：关键词，最多 100 字符（超出截断）
+- `engine`：当前搜索引擎的域名（如 `google.com`），用于选择联想来源
+
+成功返回：
+
+```json
+{
+  "query": "claude",
+  "provider": "google",
+  "suggestions": ["claude ai", "claude code", "claude desktop"]
+}
+```
+
+说明：
+
+- 来源固定为 Google / Bing / 百度 / DuckDuckGo（都返回 OpenSearch JSON），不是通用代理
+- 优先用与当前引擎同名的来源，失败时依次回退 Bing、百度；全部失败返回空数组（仍为 200）
+- 每个来源超时 3 秒，最多返回 8 条，结果在服务端缓存 10 分钟
+- 按 IP 限流：每分钟 120 次，超出返回 429
+- 用户可在设置「04 搜索历史 → 搜索联想」关闭，关闭后前端不再请求
+
 ## 7. Bing 背景接口
 
 ### `GET /api/background/bing`
