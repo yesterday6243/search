@@ -112,7 +112,7 @@
                 aria-label="清空输入"
                 title="清空"
               >
-                ×
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7.05 5.64 4.95 4.95 4.95-4.95 1.41 1.41L13.41 12l4.95 4.95-1.41 1.41L12 13.41l-4.95 4.95-1.41-1.41L10.59 12 5.64 7.05l1.41-1.41Z" /></svg>
               </button>
             </div>
 
@@ -367,13 +367,15 @@
       </div>
     </aside>
 
-    <aside class="auth-modal hidden" id="authModal" aria-hidden="true">
+    <aside class="auth-modal hidden" id="authModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="authTitle">
       <div class="auth-header">
         <div>
           <p class="section-kicker">ACCOUNT</p>
           <h2 id="authTitle">登录账号</h2>
         </div>
-        <button class="ghost-button" id="closeAuthButton" type="button">关闭</button>
+        <button class="modal-close-button" id="closeAuthButton" type="button" aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z" /></svg>
+        </button>
       </div>
       <div class="auth-tabs">
         <button class="auth-tab is-active" id="authTabLogin" type="button">登录</button>
@@ -411,30 +413,56 @@
       </form>
     </aside>
 
-    <aside class="auth-modal sync-modal hidden" id="syncModal" aria-hidden="true">
-      <div class="auth-header">
-        <div>
-          <p class="section-kicker">BACKUP</p>
-          <h2>云端备份与同步</h2>
+    <aside class="auth-modal sync-modal hidden" id="syncModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="syncModalTitle">
+      <header class="modal-header">
+        <span class="modal-header-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6.5 19a4.5 4.5 0 0 1-.67-8.95A6 6 0 0 1 17.5 8.6 4.25 4.25 0 0 1 17.25 19H6.5Zm5.5-9-3.5 3.5h2.5V17h2v-3.5h2.5L12 10Z" /></svg>
+        </span>
+        <div class="modal-header-text">
+          <h2 id="syncModalTitle">云端备份</h2>
+          <p class="auth-meta" id="syncModalMeta">手动把本地数据备份到云端，或从云端备份恢复。</p>
         </div>
-        <button class="ghost-button" id="closeSyncModalButton" type="button">关闭</button>
-      </div>
-      <p class="auth-meta" id="syncModalMeta">手动把本地数据备份到云端，或从云端备份恢复并覆盖当前本地数据。</p>
-      <p class="auth-message hidden" id="syncModalMessage"></p>
-      <div class="sync-modal-actions">
-        <button class="primary-button" id="backupNowButton" type="button">备份当前本地数据</button>
-        <button class="ghost-button" id="refreshBackupsButton" type="button">刷新记录</button>
+        <button class="modal-close-button" id="closeSyncModalButton" type="button" aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z" /></svg>
+        </button>
+      </header>
+
+      <section class="sync-status-card" id="syncStatusCard" data-tone="default">
+        <span class="sync-status-icon" aria-hidden="true"></span>
+        <div class="sync-status-text">
+          <strong id="syncStatusTitle">云端备份就绪</strong>
+          <span id="syncStatusDetail">本地改动不会自动上传，需要时手动备份。</span>
+        </div>
+        <div class="sync-status-actions">
+          <button class="modal-icon-button" id="refreshBackupsButton" type="button" aria-label="刷新记录" title="刷新记录">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 0 1 6.32 4H15v2h6V5h-2v2.35A9 9 0 1 0 21 12h-2a7 7 0 1 1-7-7Z" /></svg>
+          </button>
+          <button class="primary-button sync-backup-now" id="backupNowButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 16V7.83l-3.09 3.08L6.5 9.5 12 4l5.5 5.5-1.41 1.41L13 7.83V16h-2Zm-6 2h14v2H5v-2Z" /></svg>
+            <span>立即备份</span>
+          </button>
+        </div>
+      </section>
+
+      <p class="auth-message hidden" id="syncModalMessage" role="status"></p>
+
+      <div class="sync-list-header">
+        <h3>备份记录</h3>
+        <span id="syncBackupCount"></span>
       </div>
       <div class="sync-backup-list" id="syncBackupList"></div>
+      <p class="sync-footnote">恢复会用所选备份覆盖当前本地数据。超出保留上限时，最早的备份会被自动移除。</p>
     </aside>
 
-    <aside class="auth-modal confirm-modal hidden" id="confirmModal" aria-hidden="true">
+    <aside class="auth-modal confirm-modal hidden" id="confirmModal" aria-hidden="true" role="alertdialog" aria-modal="true" aria-labelledby="confirmModalTitle">
       <div class="auth-header">
         <div>
           <p class="section-kicker">CONFIRM</p>
           <h2 id="confirmModalTitle">请确认操作</h2>
         </div>
-        <button class="ghost-button" id="closeConfirmModalButton" type="button">关闭</button>
+        <button class="modal-close-button" id="closeConfirmModalButton" type="button" aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z" /></svg>
+        </button>
       </div>
       <p class="auth-meta" id="confirmModalMessage">确认后会继续执行当前操作。</p>
       <label class="field hidden" id="confirmModalInputField">

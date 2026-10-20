@@ -196,17 +196,26 @@
 {
   "backups": [
     {
-      "id": "backup_xxx",
+      "id": "12",
       "name": "备份 2026/04/07 13:20",
-      "createdAt": "2026-04-07T05:20:00.000Z"
+      "createdAt": "2026-04-07T05:20:00.000Z",
+      "summary": {
+        "categories": 4,
+        "links": 60,
+        "engines": 8,
+        "bytes": 5413
+      }
     }
-  ]
+  ],
+  "backupLimit": 10
 }
 ```
 
 说明：
 
-- 当前后端只保留最近 3 条
+- 后端每个用户最多保留 `backupLimit`（当前为 10）条，超出时自动删除最早的一条
+- `summary` 是备份内容摘要（分类数、标签数、引擎数、JSON 字节数），供备份页列表展示
+- `POST` / `PATCH` / `DELETE` 备份接口返回的 `backups` 列表结构相同，也带 `backupLimit`
 
 ### `GET /api/backups/:backupId`
 
@@ -388,6 +397,42 @@
 说明：
 
 - 服务端会校验内容，避免把 HTML 错误页缓存成图标
+
+### `POST /api/icon-cache/discover`
+
+用途：
+
+- 读取网页自身 `<link rel="icon">` / `apple-touch-icon` 声明的图标（包括内联 `data:` SVG）
+- 解决 `/favicon.ico` 不存在、第三方 favicon 服务只返回通用地球占位图的网站
+
+需要登录。
+
+请求体：
+
+```json
+{
+  "url": "https://szaq.top/focus/"
+}
+```
+
+成功返回：
+
+```json
+{
+  "ok": true,
+  "host": "szaq.top",
+  "dataUrl": "data:image/svg+xml;base64,..."
+}
+```
+
+说明：
+
+- 服务端缓存里已有该 host 时直接返回缓存，不再抓取页面
+- 找不到图标时返回 `"dataUrl": ""`（仍为 200）
+- 只允许 http/https；会解析 DNS 并拒绝内网 / 本机地址，防止 SSRF
+- 页面最多读取 1MB（读到 `</head>` 即停止），超时 10 秒
+- 多个候选时优先 SVG，其次按 `sizes` 取最大尺寸
+- 成功结果写入服务端共享图标缓存（覆盖旧值）
 
 ## 7. Bing 背景接口
 

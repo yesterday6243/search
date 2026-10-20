@@ -210,6 +210,7 @@ app.put("/api/state", requireAuth, (req, res) => {
 app.get("/api/backups", requireAuth, (req, res) => {
   res.json({
     backups: listUserBackups(req.authUser.id),
+    backupLimit: USER_BACKUP_LIMIT,
   });
 });
 
@@ -250,6 +251,7 @@ app.patch("/api/backups/:backupId", requireAuth, (req, res) => {
     ok: true,
     backup,
     backups: listUserBackups(req.authUser.id),
+    backupLimit: USER_BACKUP_LIMIT,
   });
 });
 
@@ -262,6 +264,7 @@ app.delete("/api/backups/:backupId", requireAuth, (req, res) => {
   res.json({
     ok: true,
     backups: listUserBackups(req.authUser.id),
+    backupLimit: USER_BACKUP_LIMIT,
   });
 });
 
@@ -710,7 +713,7 @@ function listUserBackups(userId) {
   return db
     .prepare(
       `
-        SELECT id, name, created_at
+        SELECT id, name, data, created_at
         FROM user_backups
         WHERE user_id = ?
         ORDER BY created_at DESC, id DESC
@@ -722,7 +725,26 @@ function listUserBackups(userId) {
       id: String(row.id),
       name: normalizeBackupName(row.name, row.created_at),
       createdAt: row.created_at,
+      summary: summarizeBackupData(row.data),
     }));
+}
+
+// Lightweight content summary shown in the backup list (counts + payload size).
+function summarizeBackupData(rawData) {
+  const text = typeof rawData === "string" ? rawData : "";
+  let state = null;
+  try {
+    state = JSON.parse(text);
+  } catch {
+    state = null;
+  }
+  const categories = Array.isArray(state?.categories) ? state.categories : [];
+  return {
+    categories: categories.length,
+    links: categories.reduce((total, category) => total + (Array.isArray(category?.links) ? category.links.length : 0), 0),
+    engines: Array.isArray(state?.engines) ? state.engines.length : 0,
+    bytes: Buffer.byteLength(text, "utf8"),
+  };
 }
 
 function getUserBackupRecord(userId, backupId) {
@@ -783,6 +805,7 @@ function createUserBackup(userId, inputState) {
     name: backupName,
     createdAt,
     backups: listUserBackups(userId),
+    backupLimit: USER_BACKUP_LIMIT,
   };
 }
 

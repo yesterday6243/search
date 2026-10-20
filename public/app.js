@@ -24,6 +24,10 @@ const backupNowButton = document.getElementById("backupNowButton");
 const refreshBackupsButton = document.getElementById("refreshBackupsButton");
 const syncBackupList = document.getElementById("syncBackupList");
 const confirmModal = document.getElementById("confirmModal");
+const syncStatusCard = document.getElementById("syncStatusCard");
+const syncStatusTitle = document.getElementById("syncStatusTitle");
+const syncStatusDetail = document.getElementById("syncStatusDetail");
+const syncBackupCount = document.getElementById("syncBackupCount");
 const confirmModalTitle = document.getElementById("confirmModalTitle");
 const confirmModalMessage = document.getElementById("confirmModalMessage");
 const confirmModalInputField = document.getElementById("confirmModalInputField");
@@ -135,6 +139,10 @@ const NOTICE_HIDE_DELAY_MS = 2200;
 const SEARCH_BAR_HEIGHT_MIN = 52;
 const SEARCH_BAR_HEIGHT_MAX = 96;
 const TAG_FADE_START_DISTANCE = 34;
+// Where CSS scroll-driven animations exist, styles.css fades tags on the compositor;
+// the per-frame JS fade below is only a fallback (it always lags fast scrolling by a frame or more).
+const SUPPORTS_SCROLL_DRIVEN_FADE =
+  typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("animation-timeline: view()");
 const TAG_FADE_HIDDEN_OFFSET = 2;
 const CATEGORY_DROP_EDGE_PADDING = 16;
 const CATEGORY_DROP_END_ZONE = 42;
@@ -224,10 +232,23 @@ const tagPointerDrag = {
   scrollParent: null,
   suppressClick: false,
 };
-const categoryDragState = {
-  categoryId: "",
-  targetCategoryId: "",
-  dropPosition: "center",
+const ROW_DRAG_TOUCH_HOLD_MS = 260;
+const rowPointerDrag = {
+  pointerId: null,
+  pointerType: "",
+  row: null,
+  ghost: null,
+  active: false,
+  settling: false,
+  holdTimer: 0,
+  frame: 0,
+  startX: 0,
+  startY: 0,
+  pointerY: 0,
+  offsetY: 0,
+  ghostLeft: 0,
+  originNext: null,
+  scrollParent: null,
 };
 
 let appState = null;
@@ -236,6 +257,8 @@ let homeTagSearchQuery = "";
 const tagSearchTermsCache = new Map();
 let syncModalBusy = false;
 let syncModalBackups = [];
+let syncModalBackupLimit = 10;
+let syncModalLoaded = false;
 let settingsTrailFrame = 0;
 let settingsQuickScrollFrame = 0;
 let tagViewportFadeFrame = 0;
@@ -264,7 +287,6 @@ let authState = {
 };
 let iconSourceCache = loadIconSourceCache();
 let serverDefaultIconCache = {};
-let categoryDropIndicator = null;
 let currentActiveEngineId = "";
 const engineButtonIconNodeCache = new Map();
 const engineRenderKeyCache = new Map();
@@ -283,7 +305,6 @@ let confirmScopeElement = null;
 boot();
 
 async function boot() {
-  ensureCategoryDropIndicator();
   bindEvents();
   const cachedStatePayload = loadPersistedStateSnapshot();
   if (cachedStatePayload) {
@@ -475,8 +496,23 @@ function bindEvents() {
 
     searchInput.value = item.dataset.query || "";
     updateSearchClearButton();
+    // 「搜索」runs the query right away with the current engine; the rest of the row only fills the input.
+    if (event.target.closest("[data-history-search]")) {
+      closeMenus();
+      searchForm.requestSubmit();
+      return;
+    }
     searchInput.focus();
     closeMenus();
+  });
+
+  historyPanel.addEventListener("keydown", (event) => {
+    const item = event.target instanceof Element ? event.target : null;
+    if (!item?.matches("[data-history-id]") || (event.key !== "Enter" && event.key !== " ")) {
+      return;
+    }
+    event.preventDefault();
+    item.click();
   });
 
   engineMenu.addEventListener("click", async (event) => {
@@ -503,23 +539,11 @@ function bindEvents() {
   });
 
   tagBoard.addEventListener("dragstart", handleTagDragStart);
-  tagBoard.addEventListener("dragover", handleTagDragOver);
-  tagBoard.addEventListener("drop", handleTagDrop);
-  tagBoard.addEventListener("dragend", handleTagDragEnd);
   tagBoard.addEventListener("pointerdown", handleTagPointerDown);
+  tagBoard.addEventListener("pointerdown", handleRowPointerDown);
   tagBoard.addEventListener("click", handleTagDragClickGuard, true);
   tagBoard.addEventListener("contextmenu", handleTagDragContextMenu);
   tagBoard.addEventListener("touchmove", handleTagDragTouchMove, { passive: false });
-}
-
-function ensureCategoryDropIndicator() {
-  if (!tagBoard || categoryDropIndicator?.isConnected) {
-    return;
-  }
-  categoryDropIndicator = document.createElement("div");
-  categoryDropIndicator.className = "category-drop-indicator";
-  categoryDropIndicator.setAttribute("aria-hidden", "true");
-  tagBoard.appendChild(categoryDropIndicator);
 }
 
 function createGuestPayload() {
@@ -806,6 +830,7 @@ function openSyncModal() {
   syncModal.classList.remove("hidden");
   syncModal.setAttribute("aria-hidden", "false");
   setSyncModalMessage("");
+  syncModalLoaded = syncModalBackups.length > 0;
   renderSyncModalMeta();
   renderBackupList();
   syncOverlayVisibility();
@@ -831,6 +856,7 @@ function openConfirmDialog({
   inputValue = null,
   inputLabel = "名称",
   inputPlaceholder = "",
+  tone = "default",
 } = {}) {
   if (!confirmModal || !confirmModalTitle || !confirmModalMessage) {
     return Promise.resolve(false);
@@ -844,6 +870,7 @@ function openConfirmDialog({
   confirmModalMessage.textContent = message;
   if (confirmModalConfirmButton) {
     confirmModalConfirmButton.textContent = confirmText;
+    confirmModalConfirmButton.classList.toggle("is-danger", tone === "danger");
   }
   if (confirmModalCancelButton) {
     confirmModalCancelButton.textContent = cancelText;
@@ -902,14 +929,83 @@ function resolveConfirmDialog(result) {
 }
 
 function renderSyncModalMeta() {
-  if (!syncModalMeta) {
+  if (syncModalMeta) {
+    syncModalMeta.textContent = authState.loggedIn
+      ? `已登录 ${authState.username || ""} · 数据只在你手动备份时上传`
+      : "登录后可管理云端备份与同步。";
+  }
+  renderSyncModalStatus();
+}
+
+function renderSyncModalStatus() {
+  if (!syncStatusCard || !syncStatusTitle || !syncStatusDetail) {
     return;
   }
+  const meta = getCurrentSyncMeta();
+  const latest = syncModalBackups[0];
+  let tone = "success";
+  let title = "云端备份已是最新";
+  let detail = latest?.createdAt
+    ? `最近一次备份 ${formatRelativeTime(latest.createdAt)}`
+    : "本地改动不会自动上传，需要时手动备份。";
+
   if (!authState.loggedIn) {
-    syncModalMeta.textContent = "登录后可管理云端备份与同步。";
-    return;
+    tone = "default";
+    title = "尚未登录";
+    detail = "登录后即可把首页配置备份到云端。";
+  } else if (meta.dirty) {
+    tone = "warning";
+    title = "有未备份的改动";
+    detail = latest?.createdAt
+      ? `上次备份于 ${formatRelativeTime(latest.createdAt)}，之后的改动只保存在本机。`
+      : "当前改动只保存在本机，建议立即备份。";
+  } else if (meta.lastAction === "sync" && meta.lastActionAt) {
+    title = "已从云端恢复";
+    detail = `${formatRelativeTime(meta.lastActionAt)}同步到本机`;
+  } else if (!latest && syncModalLoaded) {
+    tone = "default";
+    title = "还没有云端备份";
+    detail = "创建第一份备份，换设备时可以一键恢复。";
   }
-  syncModalMeta.textContent = "备份会把当前本地数据写入云端。同步会从选中的云端备份恢复，并覆盖当前本地数据。";
+
+  syncStatusCard.dataset.tone = tone;
+  syncStatusTitle.textContent = title;
+  syncStatusDetail.textContent = detail;
+}
+
+function formatRelativeTime(value) {
+  const time = new Date(value).getTime();
+  if (!Number.isFinite(time)) {
+    return "";
+  }
+  const seconds = Math.round((Date.now() - time) / 1000);
+  if (seconds < 45) {
+    return "刚刚";
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes} 分钟前`;
+  }
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) {
+    return `${hours} 小时前`;
+  }
+  const days = Math.round(hours / 24);
+  if (days < 7) {
+    return `${days} 天前`;
+  }
+  return formatTime(value);
+}
+
+function formatByteSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`;
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function setSyncModalMessage(message = "", tone = "error") {
@@ -931,12 +1027,16 @@ function setSyncModalBusyState(busy) {
   syncModalBusy = Boolean(busy);
   syncStatus?.classList.toggle("is-busy", syncModalBusy);
   syncStatus?.setAttribute("aria-busy", syncModalBusy ? "true" : "false");
+  syncModal?.classList.toggle("is-busy", syncModalBusy);
   if (backupNowButton) {
     backupNowButton.disabled = syncModalBusy;
   }
   if (refreshBackupsButton) {
     refreshBackupsButton.disabled = syncModalBusy;
   }
+  syncBackupList?.querySelectorAll("button").forEach((button) => {
+    button.disabled = syncModalBusy;
+  });
 }
 
 async function handleSyncAuthError(error) {
@@ -959,6 +1059,8 @@ async function refreshBackupList() {
   try {
     const payload = await fetchJson("/api/backups");
     syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : [];
+    applyBackupLimit(payload);
+    syncModalLoaded = true;
     renderBackupList();
   } catch (error) {
     console.error(error);
@@ -971,34 +1073,77 @@ async function refreshBackupList() {
   }
 }
 
+function applyBackupLimit(payload) {
+  const limit = Number(payload?.backupLimit);
+  if (Number.isInteger(limit) && limit > 0) {
+    syncModalBackupLimit = limit;
+  }
+}
+
 function renderBackupList() {
   if (!syncBackupList) {
     return;
   }
+  if (syncBackupCount) {
+    syncBackupCount.textContent = syncModalLoaded ? `${syncModalBackups.length} / ${syncModalBackupLimit}` : "";
+  }
+  renderSyncModalStatus();
+
+  if (!syncModalLoaded && authState.loggedIn) {
+    syncBackupList.innerHTML = Array.from({ length: 3 }, () => '<div class="sync-backup-skeleton" aria-hidden="true"><span></span><span></span></div>').join("");
+    return;
+  }
+
   if (!syncModalBackups.length) {
-    syncBackupList.innerHTML = '<div class="sync-backup-empty">当前还没有云端备份。先点击上方“备份当前本地数据”创建一条记录。</div>';
+    syncBackupList.innerHTML = `
+      <div class="sync-backup-empty">
+        <span class="sync-backup-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6.5 19a4.5 4.5 0 0 1-.67-8.95A6 6 0 0 1 17.5 8.6 4.25 4.25 0 0 1 17.25 19H6.5Z" /></svg>
+        </span>
+        <strong>还没有云端备份</strong>
+        <span>点击上方「立即备份」，把当前首页配置保存到云端。</span>
+      </div>
+    `;
     return;
   }
 
   syncBackupList.innerHTML = syncModalBackups
     .map((backup, index) => {
       const backupId = escapeAttribute(backup.id || "");
-      const createdAt = backup.createdAt ? formatPreciseTime(backup.createdAt) : "未知时间";
+      const createdAt = backup.createdAt || "";
       const backupName = (backup.name || `备份 ${syncModalBackups.length - index}`).trim();
+      const summary = backup.summary || {};
+      const stats = [
+        Number.isFinite(summary.categories) ? `${summary.categories} 个分类` : "",
+        Number.isFinite(summary.links) ? `${summary.links} 个标签` : "",
+        Number.isFinite(summary.engines) ? `${summary.engines} 个引擎` : "",
+        summary.bytes ? formatByteSize(summary.bytes) : "",
+      ].filter(Boolean);
       return `
-        <div class="sync-backup-item">
-          <div>
+        <article class="sync-backup-item" style="--item-index:${index}">
+          <span class="sync-backup-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 5h16v4H4V5Zm1 5h14v9H5v-9Zm4 2v2h6v-2H9Z" /></svg>
+          </span>
+          <div class="sync-backup-body">
             <div class="sync-backup-title-row">
-              <p class="sync-backup-title">${escapeHtml(backupName)}</p>
-              <button class="sync-backup-rename" type="button" data-backup-action="rename" data-backup-id="${backupId}" data-backup-name="${escapeAttribute(backupName)}">重命名</button>
+              <p class="sync-backup-title" title="${escapeAttribute(backupName)}">${escapeHtml(backupName)}</p>
+              ${index === 0 ? '<span class="sync-backup-badge">最新</span>' : ""}
+              <button class="sync-backup-rename" type="button" data-backup-action="rename" data-backup-id="${backupId}" data-backup-name="${escapeAttribute(backupName)}" aria-label="重命名" title="重命名">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.06 6.19 3.75 3.75L8.75 19H5v-3.75l9.06-9.06Zm1.42-1.42 1.6-1.6a1 1 0 0 1 1.41 0l2.34 2.34a1 1 0 0 1 0 1.41l-1.6 1.6-3.75-3.75Z" /></svg>
+              </button>
             </div>
-            <p class="sync-backup-meta">创建时间 · ${escapeHtml(createdAt)}</p>
+            <p class="sync-backup-meta">
+              <time datetime="${escapeAttribute(createdAt)}" title="${escapeAttribute(createdAt ? formatPreciseTime(createdAt) : "")}">${escapeHtml(createdAt ? formatRelativeTime(createdAt) : "未知时间")}</time>
+              ${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+            </p>
           </div>
           <div class="sync-backup-actions">
-            <button class="primary-button" type="button" data-backup-action="restore" data-backup-id="${backupId}">同步到本地</button>
-            <button class="ghost-button danger" type="button" data-backup-action="delete" data-backup-id="${backupId}">删除</button>
+            <button class="ghost-button sync-backup-restore" type="button" data-backup-action="restore" data-backup-id="${backupId}">恢复</button>
+            <button class="modal-icon-button danger" type="button" data-backup-action="delete" data-backup-id="${backupId}" aria-label="删除备份" title="删除备份">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-.8 11.1A2 2 0 0 1 15.2 22H8.8a2 2 0 0 1-2-1.9L6 9Zm4 2v8h2v-8h-2Zm4 0v8h2v-8h-2Z" /></svg>
+            </button>
           </div>
-        </div>
+        </article>
       `;
     })
     .join("");
@@ -1024,6 +1169,8 @@ async function handleBackupNow() {
       }),
     });
     syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : syncModalBackups;
+    applyBackupLimit(payload);
+    syncModalLoaded = true;
     markSyncAction("backup");
     renderBackupList();
     setSyncModalMessage("当前本地数据已备份到云端。", "success");
@@ -1132,6 +1279,7 @@ async function handleDeleteBackup(backupId) {
     title: "删除云端备份",
     message: "删除后这条云端备份将无法恢复。是否继续？",
     confirmText: "删除",
+    tone: "danger",
     scopeElement: syncModal,
   });
   if (!confirmed) {
@@ -1260,8 +1408,26 @@ function renderBrandIdentity() {
 function applyIconTheme(themeId) {
   const theme = ICON_THEMES.find((item) => item.id === themeId) || ICON_THEMES[0];
   settingsDrawer.dataset.colorTheme = theme.id;
+  [authModal, syncModal, confirmModal].forEach((dialog) => {
+    if (dialog) {
+      dialog.dataset.colorTheme = theme.id;
+    }
+  });
   settingsDrawer.style.setProperty("--settings-theme-panel", theme.panel);
   settingsDrawer.style.setProperty("--settings-theme-accent", theme.accent);
+}
+
+function playEngineSwapAnimation() {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || typeof activeEngineIcon.animate !== "function") {
+    return;
+  }
+  activeEngineIcon.animate(
+    [
+      { opacity: 0, scale: "0.55", rotate: "-18deg" },
+      { opacity: 1, scale: "1", rotate: "0deg" },
+    ],
+    { duration: 340, easing: "cubic-bezier(0.2, 0.9, 0.3, 1.3)" }
+  );
 }
 
 function renderActiveEngineButton() {
@@ -1292,8 +1458,12 @@ function renderActiveEngineButton() {
     iconNode &&
     (currentActiveEngineId !== activeEngine.id || activeEngineIcon.firstElementChild !== iconNode)
   ) {
+    const switchedEngine = Boolean(currentActiveEngineId) && currentActiveEngineId !== activeEngine.id;
     activeEngineIcon.replaceChildren(iconNode);
     currentActiveEngineId = activeEngine.id;
+    if (switchedEngine) {
+      playEngineSwapAnimation();
+    }
   }
 
   engineToggleButton.title = `当前搜索引擎：${activeEngine.name}`;
@@ -1328,7 +1498,6 @@ function primeEngineButtonIcons() {
 function renderTagBoard() {
   if (!appState.categories.length) {
     tagBoard.innerHTML = '<div class="empty-state">当前还没有标签分类，去右上角设置里添加即可。</div>';
-    ensureCategoryDropIndicator();
     return;
   }
 
@@ -1342,7 +1511,6 @@ function renderTagBoard() {
 
   if (!visibleCategories.length) {
     tagBoard.innerHTML = '<div class="empty-state">没有匹配的自定义标签。</div>';
-    ensureCategoryDropIndicator();
     return;
   }
 
@@ -1397,7 +1565,7 @@ function renderTagBoard() {
         <section class="${rowClassNames}" data-category-id="${escapeAttribute(category.id)}" style="--category-rows:1;">
           <div
             class="category-head"
-            draggable="true"
+            draggable="false"
             data-category-drag-handle="true"
             data-category-id="${escapeAttribute(category.id)}"
             title="拖动调整分类顺序"
@@ -1415,7 +1583,6 @@ function renderTagBoard() {
       `;
     })
     .join("");
-  ensureCategoryDropIndicator();
   queueTagOverflowLayoutUpdate();
   queueTagLabelFit();
   queueTagViewportFadeUpdate();
@@ -1451,14 +1618,14 @@ function renderHistoryList(keyword = "") {
       const engine = appState.engines.find((item) => item.id === entry.engineId);
       const iconUrl = engine ? getFaviconUrlFromTemplate(engine.urlTemplate) : "";
       return `
-        <button class="history-item" type="button" data-history-id="${escapeAttribute(entry.id)}" data-query="${escapeAttribute(entry.query)}">
+        <div class="history-item" role="button" tabindex="0" data-history-id="${escapeAttribute(entry.id)}" data-query="${escapeAttribute(entry.query)}" title="填入搜索框">
           ${buildIconMarkup(iconUrl, engine?.name || entry.query, "history-engine-icon")}
-          <div>
+          <div class="history-text">
             <div class="history-query">${escapeHtml(entry.query)}</div>
             <div class="history-meta">${escapeHtml(engine?.name || "搜索")} · ${formatTime(entry.createdAt)}</div>
           </div>
-          <div class="history-meta">使用</div>
-        </button>
+          <button class="history-search-button" type="button" data-history-search title="用当前搜索引擎搜索">搜索</button>
+        </div>
       `;
     })
     .join("");
@@ -2290,6 +2457,7 @@ async function clearHistory() {
     title: "清空本地搜索历史",
     message: `这会删除当前浏览器里最近 ${normalizeHistoryLimit(appState?.settings?.historyLimit)} 条搜索历史，且不会影响云端备份。是否继续？`,
     confirmText: "清空历史",
+    tone: "danger",
     scopeElement: settingsDrawer,
   });
   if (!confirmed) {
@@ -2338,47 +2506,11 @@ async function updateState(patch, options = {}) {
   return payload;
 }
 
+// Tags and rows use pointer-driven drags; block the browser's native link/image dragging.
 function handleTagDragStart(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) {
-    return;
-  }
-  const categoryHandle = target.closest("[data-category-drag-handle]");
-  if (categoryHandle?.dataset.categoryId) {
-    const row = categoryHandle.closest(".category-row");
-    categoryDragState.categoryId = categoryHandle.dataset.categoryId;
-    categoryDragState.targetCategoryId = "";
-    categoryDragState.dropPosition = "center";
-    row?.classList.add("is-category-dragging");
-    tagBoard.classList.add("is-dragging-categories");
-
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", categoryDragState.categoryId);
-    }
-    return;
-  }
-
-  // Tag cards use the pointer-driven drag below; block native link/image dragging.
-  if (target.closest(".tag-card")) {
+  if (event.target instanceof Element && event.target.closest(".tag-card, [data-category-drag-handle]")) {
     event.preventDefault();
   }
-}
-
-function handleTagDragOver(event) {
-  if (categoryDragState.categoryId) {
-    handleCategoryDragOver(event);
-  }
-}
-
-function handleTagDrop(event) {
-  if (categoryDragState.categoryId) {
-    handleCategoryDrop(event);
-  }
-}
-
-function handleTagDragEnd() {
-  clearCategoryDragState();
 }
 
 function handleTagPointerDown(event) {
@@ -2474,13 +2606,13 @@ function handleTagDragClickGuard(event) {
 }
 
 function handleTagDragContextMenu(event) {
-  if (tagPointerDrag.card) {
+  if (tagPointerDrag.card || rowPointerDrag.row) {
     event.preventDefault();
   }
 }
 
 function handleTagDragTouchMove(event) {
-  if (tagPointerDrag.active) {
+  if (tagPointerDrag.active || rowPointerDrag.active) {
     event.preventDefault();
   }
 }
@@ -2728,8 +2860,7 @@ function isRectVisibleIn(rect, clipRect) {
   );
 }
 
-function autoScrollDuringTagDrag(pointerY) {
-  const scroller = tagPointerDrag.scrollParent;
+function autoScrollDuringTagDrag(pointerY, scroller = tagPointerDrag.scrollParent) {
   if (!scroller) {
     return false;
   }
@@ -2853,292 +2984,259 @@ function moveLinkBefore(fromCategoryId, linkId, toCategoryId, beforeLinkId = "")
   return before === after ? null : nextCategories;
 }
 
-function captureElementRects(elements, datasetKey) {
-  return new Map(
-    Array.from(elements).map((element) => [element.dataset[datasetKey], element.getBoundingClientRect()])
-  );
+// ---- Category row drag (whole row lifts and moves vertically; others slide aside) ----
+
+function handleRowPointerDown(event) {
+  if (event.button !== 0 || rowPointerDrag.row || rowPointerDrag.settling || tagPointerDrag.card || homeTagSearchQuery) {
+    return;
+  }
+  const handle = event.target instanceof Element ? event.target.closest("[data-category-drag-handle]") : null;
+  const row = handle?.closest(".category-row");
+  if (!row || tagBoard.querySelectorAll(".category-row").length < 2) {
+    return;
+  }
+
+  Object.assign(rowPointerDrag, {
+    pointerId: event.pointerId,
+    pointerType: event.pointerType || "mouse",
+    row,
+    active: false,
+    startX: event.clientX,
+    startY: event.clientY,
+    pointerY: event.clientY,
+  });
+  if (rowPointerDrag.pointerType !== "mouse") {
+    rowPointerDrag.holdTimer = window.setTimeout(startRowPointerDrag, ROW_DRAG_TOUCH_HOLD_MS);
+  }
+  window.addEventListener("pointermove", handleRowPointerMove);
+  window.addEventListener("pointerup", handleRowPointerUp);
+  window.addEventListener("pointercancel", handleRowPointerCancel);
+  window.addEventListener("keydown", handleRowDragKeydown);
 }
 
-function playElementFlip(elements, datasetKey, previousRects) {
-  Array.from(elements).forEach((element) => {
-    const first = previousRects.get(element.dataset[datasetKey]);
-    if (!first) {
+function handleRowPointerMove(event) {
+  if (event.pointerId !== rowPointerDrag.pointerId) {
+    return;
+  }
+  rowPointerDrag.pointerY = event.clientY;
+  const distance = Math.hypot(event.clientX - rowPointerDrag.startX, event.clientY - rowPointerDrag.startY);
+  if (!rowPointerDrag.active) {
+    if (rowPointerDrag.pointerType === "mouse") {
+      if (distance >= TAG_DRAG_START_DISTANCE) {
+        startRowPointerDrag();
+      }
+    } else if (distance > TAG_DRAG_TOUCH_SLOP) {
+      resetRowPointerDrag();
+    }
+    return;
+  }
+  event.preventDefault();
+  scheduleRowDragFrame();
+}
+
+function handleRowPointerUp(event) {
+  if (event.pointerId !== rowPointerDrag.pointerId) {
+    return;
+  }
+  if (rowPointerDrag.active) {
+    finishRowPointerDrag(true);
+  } else {
+    resetRowPointerDrag();
+  }
+}
+
+function handleRowPointerCancel(event) {
+  if (event.pointerId !== rowPointerDrag.pointerId) {
+    return;
+  }
+  if (rowPointerDrag.active) {
+    finishRowPointerDrag(false);
+  } else {
+    resetRowPointerDrag();
+  }
+}
+
+function handleRowDragKeydown(event) {
+  if (event.key === "Escape" && rowPointerDrag.active) {
+    event.preventDefault();
+    finishRowPointerDrag(false);
+  }
+}
+
+function startRowPointerDrag() {
+  const { row } = rowPointerDrag;
+  window.clearTimeout(rowPointerDrag.holdTimer);
+  rowPointerDrag.holdTimer = 0;
+  if (!row?.isConnected || rowPointerDrag.active) {
+    return;
+  }
+
+  const rect = row.getBoundingClientRect();
+  const ghost = row.cloneNode(true);
+  ghost.classList.add("category-row-ghost");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.querySelectorAll("a[href]").forEach((link) => link.removeAttribute("href"));
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.translate = `${rect.left}px ${rect.top}px`;
+  ghost.style.transformOrigin = `${rowPointerDrag.startX - rect.left}px ${rowPointerDrag.startY - rect.top}px`;
+  document.body.appendChild(ghost);
+
+  Object.assign(rowPointerDrag, {
+    active: true,
+    ghost,
+    offsetY: rowPointerDrag.startY - rect.top,
+    ghostLeft: rect.left,
+    originNext: row.nextElementSibling,
+    scrollParent: getScrollParent(tagBoard),
+  });
+  row.classList.add("is-row-placeholder");
+  tagBoard.classList.add("is-row-dragging");
+  document.body.classList.add("is-tag-dragging");
+  window.requestAnimationFrame(() => ghost.classList.add("is-lifted"));
+  if (rowPointerDrag.pointerType !== "mouse") {
+    navigator.vibrate?.(8);
+  }
+  scheduleRowDragFrame();
+}
+
+function scheduleRowDragFrame() {
+  if (rowPointerDrag.frame) {
+    return;
+  }
+  rowPointerDrag.frame = window.requestAnimationFrame(() => {
+    rowPointerDrag.frame = 0;
+    if (!rowPointerDrag.active) {
       return;
     }
-    const last = element.getBoundingClientRect();
-    const deltaX = first.left - last.left;
-    const deltaY = first.top - last.top;
-    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+    const { ghost, ghostLeft, pointerY, offsetY } = rowPointerDrag;
+    // Locked to the vertical axis, like reordering a list on iOS.
+    ghost.style.translate = `${ghostLeft}px ${pointerY - offsetY}px`;
+    updateRowDragPlaceholder(pointerY - offsetY + rowPointerDrag.row.offsetHeight / 2);
+    if (autoScrollDuringTagDrag(pointerY, rowPointerDrag.scrollParent)) {
+      scheduleRowDragFrame();
+    }
+  });
+}
+
+function updateRowDragPlaceholder(ghostCenterY) {
+  const placeholder = rowPointerDrag.row;
+  const boardTop = tagBoard.getBoundingClientRect().top;
+  // Layout positions (offsetTop) ignore the rows' in-flight FLIP transforms, so targets don't jitter.
+  const otherRows = Array.from(tagBoard.querySelectorAll(".category-row")).filter((row) => row !== placeholder);
+  const beforeRow =
+    otherRows.find((row) => ghostCenterY < boardTop + row.offsetTop + row.offsetHeight / 2) || null;
+
+  let currentNext = placeholder.nextElementSibling;
+  while (currentNext && !currentNext.classList.contains("category-row")) {
+    currentNext = currentNext.nextElementSibling;
+  }
+  if (beforeRow === currentNext) {
+    return;
+  }
+  animateRowReflow(() => tagBoard.insertBefore(placeholder, beforeRow));
+}
+
+function animateRowReflow(mutate) {
+  const rows = Array.from(tagBoard.querySelectorAll(".category-row"));
+  const firstRects = new Map(rows.map((row) => [row, row.getBoundingClientRect()]));
+  rows.forEach((row) => {
+    row.getAnimations().forEach((animation) => {
+      if (animation.id === "row-reflow") {
+        animation.cancel();
+      }
+    });
+  });
+  mutate();
+  rows.forEach((row) => {
+    if (row === rowPointerDrag.row) {
       return;
     }
-    element.animate(
-      [{ transform: `translate(${deltaX}px, ${deltaY}px)` }, { transform: "translate(0, 0)" }],
+    const first = firstRects.get(row);
+    const deltaY = first.top - row.getBoundingClientRect().top;
+    if (Math.abs(deltaY) < 0.5) {
+      return;
+    }
+    const animation = row.animate(
+      [{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }],
       { duration: TAG_REFLOW_DURATION_MS, easing: TAG_REFLOW_EASING }
     );
+    animation.id = "row-reflow";
   });
 }
 
-function handleCategoryDragOver(event) {
-  if (!categoryDragState.categoryId) {
-    return;
+function finishRowPointerDrag(commit) {
+  const { row, ghost, originNext } = rowPointerDrag;
+  detachRowPointerListeners();
+  window.cancelAnimationFrame(rowPointerDrag.frame);
+  rowPointerDrag.frame = 0;
+  rowPointerDrag.active = false;
+  rowPointerDrag.settling = true;
+
+  if (!commit) {
+    animateRowReflow(() => tagBoard.insertBefore(row, originNext?.parentElement === tagBoard ? originNext : null));
   }
 
-  const dropTarget = resolveCategoryDropTarget(event.clientX, event.clientY);
-  if (!dropTarget) {
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = "none";
+  const target = row.getBoundingClientRect();
+  ghost.classList.add("is-settling");
+  ghost.classList.remove("is-lifted");
+  ghost.style.translate = `${target.left}px ${target.top}px`;
+
+  window.setTimeout(() => {
+    ghost.remove();
+    row.classList.remove("is-row-placeholder");
+    tagBoard.classList.remove("is-row-dragging");
+    document.body.classList.remove("is-tag-dragging");
+    const order = Array.from(tagBoard.querySelectorAll(".category-row")).map((item) => item.dataset.categoryId);
+    resetRowPointerDrag();
+
+    const moved = commit ? reorderCategoriesToMatch(order) : null;
+    if (!moved) {
+      return;
     }
-    clearCategoryDropHints();
-    categoryDragState.targetCategoryId = "";
-    categoryDragState.dropPosition = "center";
-    return;
-  }
-
-  event.preventDefault();
-  if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = "move";
-  }
-  categoryDragState.targetCategoryId = dropTarget.targetCategoryId;
-  categoryDragState.dropPosition = dropTarget.position;
-  showCategoryDropIndicator(dropTarget);
-}
-
-function handleCategoryDrop(event) {
-  const rows = Array.from(tagBoard.querySelectorAll(".category-row"));
-  const pointerBlocked = isPointerInsideCategoryHead(rows, event.clientX, event.clientY);
-  const resolvedTarget = pointerBlocked
-    ? null
-    : resolveCategoryDropTarget(event.clientX, event.clientY);
-  const canUseStoredTarget =
-    !pointerBlocked && isPointerWithinCategoryDropArea(event.clientX, event.clientY);
-  const targetCategoryId = resolvedTarget?.targetCategoryId ||
-    (canUseStoredTarget ? categoryDragState.targetCategoryId : "");
-  const dropPosition = resolvedTarget?.position ||
-    (canUseStoredTarget ? categoryDragState.dropPosition : "");
-  if (!targetCategoryId || !dropPosition || targetCategoryId === categoryDragState.categoryId) {
-    clearCategoryDragState();
-    return;
-  }
-
-  event.preventDefault();
-  const moved = reorderCategoriesById(categoryDragState.categoryId, targetCategoryId, dropPosition);
-  clearCategoryDragState();
-
-  if (!moved) {
-    return;
-  }
-
-  const previousRowRects = captureElementRects(tagBoard.querySelectorAll(".category-row"), "categoryId");
-  const saving = updateState({ categories: moved });
-  playElementFlip(tagBoard.querySelectorAll(".category-row"), "categoryId", previousRowRects);
-  saving
-    .then(() => {
-      showNotice("分类顺序已保存到本地", "success");
-    })
-    .catch((error) => {
-      console.error(error);
-      showNotice("分类顺序保存失败，请重试", "error");
-    });
-}
-
-function clearCategoryDropHints() {
-  tagBoard
-    .querySelectorAll(".category-row.is-category-drop-before, .category-row.is-category-drop-after, .category-row.is-category-drop-center")
-    .forEach((item) => {
-      item.classList.remove("is-category-drop-before", "is-category-drop-after", "is-category-drop-center");
-    });
-  hideCategoryDropIndicator();
-}
-
-function clearCategoryDragState() {
-  tagBoard
-    .querySelectorAll(".category-row.is-category-dragging")
-    .forEach((item) => item.classList.remove("is-category-dragging"));
-  clearCategoryDropHints();
-  tagBoard.classList.remove("is-dragging-categories");
-  categoryDragState.categoryId = "";
-  categoryDragState.targetCategoryId = "";
-  categoryDragState.dropPosition = "center";
-}
-
-function reorderCategoriesById(fromCategoryId, toCategoryId, position = "center") {
-  const nextCategories = structuredClone(appState.categories);
-  const fromIndex = nextCategories.findIndex((item) => item.id === fromCategoryId);
-  const toIndex = nextCategories.findIndex((item) => item.id === toCategoryId);
-  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
-    return null;
-  }
-
-  const [moved] = nextCategories.splice(fromIndex, 1);
-  const targetIndexAfterRemoval = fromIndex < toIndex ? toIndex - 1 : toIndex;
-  let insertIndex = targetIndexAfterRemoval;
-  if (position === "after") {
-    insertIndex = targetIndexAfterRemoval + 1;
-  }
-  insertIndex = Math.max(0, Math.min(nextCategories.length, insertIndex));
-  nextCategories.splice(insertIndex, 0, moved);
-
-  const before = appState.categories.map((item) => item.id).join("|");
-  const after = nextCategories.map((item) => item.id).join("|");
-  return before === after ? null : nextCategories;
-}
-
-function resolveCategoryDropTarget(pointerX, pointerY) {
-  if (!tagBoard || !Number.isFinite(pointerX) || !Number.isFinite(pointerY)) {
-    return null;
-  }
-
-  const rows = Array.from(tagBoard.querySelectorAll(".category-row"));
-  if (rows.length < 2 || isPointerInsideCategoryHead(rows, pointerX, pointerY)) {
-    return null;
-  }
-
-  const slots = buildCategoryDropSlots(rows);
-  let bestSlot = null;
-  for (const slot of slots) {
-    if (!slot.targetCategoryId || pointerY < slot.captureTop || pointerY > slot.captureBottom) {
-      continue;
-    }
-    const distance = Math.abs(pointerY - slot.lineY);
-    if (!bestSlot || distance < bestSlot.distance) {
-      bestSlot = { ...slot, distance };
-    }
-  }
-
-  if (!bestSlot) {
-    return null;
-  }
-
-  const moved = reorderCategoriesById(categoryDragState.categoryId, bestSlot.targetCategoryId, bestSlot.position);
-  if (!moved) {
-    return null;
-  }
-
-  return bestSlot;
-}
-
-function buildCategoryDropSlots(rows) {
-  const slots = [];
-  const boardRect = tagBoard.getBoundingClientRect();
-  for (let index = 0; index <= rows.length; index += 1) {
-    const previousRow = rows[index - 1] || null;
-    const nextRow = rows[index] || null;
-    const referenceRow = nextRow || previousRow;
-    if (!referenceRow) {
-      continue;
-    }
-
-    const indicatorRect = getCategoryDropIndicatorRect(referenceRow);
-    if (!indicatorRect) {
-      continue;
-    }
-
-    if (previousRow && nextRow) {
-      const previousRect = previousRow.getBoundingClientRect();
-      const nextRect = nextRow.getBoundingClientRect();
-      const gap = Math.max(8, nextRect.top - previousRect.bottom);
-      slots.push({
-        targetCategoryId: nextRow.dataset.categoryId || "",
-        position: "before",
-        lineY: previousRect.bottom + gap / 2,
-        captureTop: previousRect.bottom - CATEGORY_DROP_EDGE_PADDING,
-        captureBottom: nextRect.top + CATEGORY_DROP_EDGE_PADDING,
-        lineLeft: indicatorRect.left - boardRect.left,
-        lineWidth: indicatorRect.width,
+    updateState({ categories: moved })
+      .then(() => {
+        showNotice("分类顺序已保存到本地", "success");
+      })
+      .catch((error) => {
+        console.error(error);
+        showNotice("分类顺序保存失败，请重试", "error");
       });
-      continue;
-    }
-
-    if (nextRow) {
-      const nextRect = nextRow.getBoundingClientRect();
-      slots.push({
-        targetCategoryId: nextRow.dataset.categoryId || "",
-        position: "before",
-        lineY: nextRect.top - CATEGORY_DROP_END_OFFSET,
-        captureTop: nextRect.top - CATEGORY_DROP_END_ZONE,
-        captureBottom: nextRect.top + CATEGORY_DROP_EDGE_PADDING,
-        lineLeft: indicatorRect.left - boardRect.left,
-        lineWidth: indicatorRect.width,
-      });
-      continue;
-    }
-
-    const previousRect = previousRow.getBoundingClientRect();
-    slots.push({
-      targetCategoryId: previousRow.dataset.categoryId || "",
-      position: "after",
-      lineY: previousRect.bottom + CATEGORY_DROP_END_OFFSET,
-      captureTop: previousRect.bottom - CATEGORY_DROP_EDGE_PADDING,
-      captureBottom: previousRect.bottom + CATEGORY_DROP_END_ZONE,
-      lineLeft: indicatorRect.left - boardRect.left,
-      lineWidth: indicatorRect.width,
-    });
-  }
-  return slots;
+  }, TAG_SETTLE_DURATION_MS);
 }
 
-function getCategoryDropIndicatorRect(row) {
-  if (!(row instanceof Element)) {
-    return null;
-  }
-  const middle = row.querySelector(".category-middle");
-  const rect = (middle instanceof Element ? middle : row).getBoundingClientRect();
-  if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.width) || rect.width <= 0) {
-    return null;
-  }
-  return rect;
+function detachRowPointerListeners() {
+  window.removeEventListener("pointermove", handleRowPointerMove);
+  window.removeEventListener("pointerup", handleRowPointerUp);
+  window.removeEventListener("pointercancel", handleRowPointerCancel);
+  window.removeEventListener("keydown", handleRowDragKeydown);
 }
 
-function isPointerInsideCategoryHead(rows, pointerX, pointerY) {
-  return rows.some((row) => {
-    const head = row.querySelector(".category-head");
-    const name = row.querySelector(".category-head .category-name");
-    const anchor = name instanceof Element ? name : head;
-    if (!(anchor instanceof Element)) {
-      return false;
-    }
-    const rect = anchor.getBoundingClientRect();
-    return (
-      rect.width > 0 &&
-      rect.height > 0 &&
-      pointerX >= rect.left &&
-      pointerX <= rect.right &&
-      pointerY >= rect.top &&
-      pointerY <= rect.bottom
-    );
+function resetRowPointerDrag() {
+  detachRowPointerListeners();
+  window.clearTimeout(rowPointerDrag.holdTimer);
+  Object.assign(rowPointerDrag, {
+    pointerId: null,
+    row: null,
+    ghost: null,
+    active: false,
+    settling: false,
+    holdTimer: 0,
+    originNext: null,
   });
 }
 
-function isPointerWithinCategoryDropArea(pointerX, pointerY) {
-  if (!tagBoard || !Number.isFinite(pointerX) || !Number.isFinite(pointerY)) {
-    return false;
-  }
-  const boardRect = tagBoard.getBoundingClientRect();
-  return (
-    pointerX >= boardRect.left &&
-    pointerX <= boardRect.right &&
-    pointerY >= boardRect.top - CATEGORY_DROP_END_ZONE &&
-    pointerY <= boardRect.bottom + CATEGORY_DROP_END_ZONE
-  );
-}
-
-function showCategoryDropIndicator(dropTarget) {
-  ensureCategoryDropIndicator();
-  if (!categoryDropIndicator || !dropTarget) {
-    return;
-  }
-  const boardRect = tagBoard.getBoundingClientRect();
-  categoryDropIndicator.style.left = `${Math.max(0, dropTarget.lineLeft)}px`;
-  categoryDropIndicator.style.width = `${Math.max(0, dropTarget.lineWidth)}px`;
-  categoryDropIndicator.style.top = `${dropTarget.lineY - boardRect.top}px`;
-  categoryDropIndicator.classList.add("is-visible");
-}
-
-function hideCategoryDropIndicator() {
-  if (!categoryDropIndicator) {
-    return;
-  }
-  categoryDropIndicator.classList.remove("is-visible");
+function reorderCategoriesToMatch(categoryIds) {
+  const byId = new Map(appState.categories.map((category) => [category.id, category]));
+  const ordered = categoryIds.map((id) => byId.get(id)).filter(Boolean);
+  // Categories not on the board (none today, but keep them rather than drop them) stay at the end.
+  appState.categories.forEach((category) => {
+    if (!ordered.includes(category)) {
+      ordered.push(category);
+    }
+  });
+  const before = appState.categories.map((category) => category.id).join("|");
+  const after = ordered.map((category) => category.id).join("|");
+  return before === after ? null : structuredClone(ordered);
 }
 
 function queueTagLabelFit() {
@@ -3783,6 +3881,9 @@ function handleSettingsQuickThumbPointerUp(event) {
 }
 
 function queueTagViewportFadeUpdate() {
+  if (SUPPORTS_SCROLL_DRIVEN_FADE) {
+    return;
+  }
   if (!tagBoard || !searchStage) {
     return;
   }
