@@ -10,6 +10,23 @@
 
 ## Recent Records
 
+### 2026-10-21 - 安全响应头与内容安全策略（CSP）
+- 现象：
+  - 响应没有任何安全头；页面大量拼接 HTML，一旦出现注入没有兜底。
+- 根因：
+  - 首屏背景预载是内联 `<script>`；图标 `<img>` 使用内联 `onload` / `onerror`，这两者都会阻止启用严格 CSP。
+- 处理方案：
+  - 内联脚本外置为 `public/boot.js`（仍在 `<head>` 同步加载，首屏行为不变）。
+  - 图标加载/失败改为 `document` 捕获阶段统一监听（`data-icon-managed` 标记）。
+  - 新增 `setSecurityHeaders`：CSP（`script-src 'self'`、`object-src 'none'`、`frame-ancestors 'none'` 等）、`nosniff`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`COOP`，HTTPS 下加 HSTS。
+  - 验证：首页、设置页各分区、登录/备份弹窗均无 CSP 违规；图标加载与失败回退链正常。
+- 涉及文件：
+  - `server.js`
+  - `public/boot.js`
+  - `public/index.html`
+  - `public/app.js`
+  - `docs/DEVELOPER_GUIDE.md`
+
 ### 2026-10-21 - 登录防暴力破解 + 启动失败静默退出修复
 - 现象：
   - `/api/auth/login` 可无限次尝试密码。

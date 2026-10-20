@@ -379,7 +379,7 @@ SQLite 数据库，当前包含：
 
 同时检查：
 
-- `public/index.html` 首屏背景预载脚本
+- `public/boot.js` 首屏背景预载脚本（原 `index.html` 内联脚本，已外置以满足 CSP）
 - `BACKGROUND_SNAPSHOT_STORAGE_KEY`
 - `refreshBackgroundNow(...)`
 - 背景 provider 对应设置项显隐
@@ -409,6 +409,17 @@ SQLite 数据库，当前包含：
 - 自定义确认弹层
 - 局部毛玻璃遮罩
 - 是否误引入浏览器原生 `alert/confirm/prompt`
+
+### 如果加脚本、事件或外部资源（CSP）
+
+`server.js` 的 `setSecurityHeaders` 对所有响应设置 CSP 与常规安全头。新增代码时：
+
+- 不要写内联 `<script>` 或 `onclick=""` / `onload=""` 这类内联事件属性，会被 `script-src 'self'` 拦截；用 `addEventListener`
+- 图标 `<img>` 的加载/失败由 `document` 上捕获阶段的 `load` / `error` 监听统一处理（标记 `data-icon-managed`），不要再加内联 `onload/onerror`
+- 不要用 `eval` / `new Function`
+- 前端 `fetch` 只能请求本站（`connect-src 'self'`）；需要第三方数据时走后端接口代理
+- 内联 `style=""`（如 CSS 变量）可以用；图片可以来自任意来源
+- 确实需要新的外部脚本 / 字体 / 接口来源时，修改 `CONTENT_SECURITY_POLICY` 并在这里记录原因
 
 ## 13. 当前已知限制
 

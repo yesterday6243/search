@@ -50,6 +50,7 @@ const app = express();
 // Behind nginx / Docker the TCP peer is the proxy; trust X-Forwarded-For only from
 // loopback and private networks so req.ip is the real client and can't be spoofed from outside.
 app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY));
+app.use(setSecurityHeaders);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(publicDir));
 
@@ -579,6 +580,34 @@ setInterval(() => {
     }
   }
 }, 5 * 60 * 1000).unref();
+
+// Scripts: only our own files (no inline JS / eval). Styles allow inline `style=""` attributes,
+// which templates use for CSS variables. Images can come from any site (favicons, backgrounds).
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src * data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
+function setSecurityHeaders(req, res, next) {
+  res.setHeader("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+  if (isSecureRequest(req)) {
+    res.setHeader("Strict-Transport-Security", "max-age=15552000");
+  }
+  next();
+}
 
 function parseTrustProxySetting(value) {
   const raw = typeof value === "string" ? value.trim() : "";

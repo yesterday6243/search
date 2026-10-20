@@ -331,6 +331,10 @@ async function boot() {
 }
 
 function bindEvents() {
+  // Icon <img> load/error handling is delegated (capture phase, since these events don't bubble)
+  // instead of inline onload/onerror attributes, so the CSP can forbid inline handlers.
+  document.addEventListener("load", handleManagedIconEvent, true);
+  document.addEventListener("error", handleManagedIconEvent, true);
   searchForm.addEventListener("submit", handleSearch);
   searchBar?.addEventListener("pointerdown", handleSearchBarPointerDown);
   searchInput.addEventListener("focus", () => renderHistoryList(searchInput.value));
@@ -4575,7 +4579,7 @@ function buildIconMarkup(iconUrl, _fallback, className = "engine-button-icon") {
   const chainSources = cachedSource ? fallbackSources : fallbackSources.slice(1);
   const readyClass = cachedSource ? " is-ready" : "";
   const imageMarkup = displaySource
-    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(displaySource)}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(chainSources.join("|"))}" alt="" loading="eager" fetchpriority="low" decoding="async" onload="window.__mxIconLoaded(this);" onerror="window.__mxIconFallback(this);" />`
+    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(displaySource)}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(chainSources.join("|"))}" data-icon-managed alt="" loading="eager" fetchpriority="low" decoding="async" />`
     : `<img class="mx-icon-image is-ready" src="${DEFAULT_ICON_DATA_URL}" alt="" loading="eager" fetchpriority="low" decoding="async" />`;
 
   return `
@@ -4583,6 +4587,18 @@ function buildIconMarkup(iconUrl, _fallback, className = "engine-button-icon") {
       ${imageMarkup}
     </span>
   `;
+}
+
+function handleManagedIconEvent(event) {
+  const imageNode = event.target;
+  if (!(imageNode instanceof HTMLImageElement) || !("iconManaged" in imageNode.dataset)) {
+    return;
+  }
+  if (event.type === "load") {
+    window.__mxIconLoaded(imageNode);
+  } else {
+    window.__mxIconFallback(imageNode);
+  }
 }
 
 window.__mxIconLoaded = function handleIconLoaded(imageNode) {
@@ -4634,8 +4650,7 @@ window.__mxIconFallback = function handleIconFallback(imageNode) {
 
   const nextSource = takeNextAvailableIconSource(chain);
   if (!nextSource) {
-    imageNode.onerror = null;
-    imageNode.onload = null;
+    delete imageNode.dataset.iconManaged;
     imageNode.dataset.iconHost = "";
     imageNode.dataset.iconChain = "";
     imageNode.classList.add("is-ready");
