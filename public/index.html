@@ -475,6 +475,21 @@
     <div class="notice-toast hidden" id="noticeToast" aria-live="polite"></div>
 
     <script src="/vendor/pinyin-pro.js"></script>
-    <script src="/app.js"></script>
+    <!-- Classic scripts sharing one global scope. Order matters: feature files only declare functions,
+         state.js initialises shared state (calls into icons/background), main.js boots the app. -->
+    <script src="/js/utils.js"></script>
+    <script src="/js/icons.js"></script>
+    <script src="/js/store.js"></script>
+    <script src="/js/background.js"></script>
+    <script src="/js/search.js"></script>
+    <script src="/js/tag-board.js"></script>
+    <script src="/js/drag.js"></script>
+    <script src="/js/settings.js"></script>
+    <script src="/js/quick-add.js"></script>
+    <script src="/js/backup.js"></script>
+    <script src="/js/auth.js"></script>
+    <script src="/js/dialogs.js"></script>
+    <script src="/js/state.js"></script>
+    <script src="/js/main.js"></script>
   </body>
 </html>

@@ -122,9 +122,11 @@ location /search/ {
 ```text
 searchindex/
 ├─ public/
-│  ├─ index.html        前端页面结构、弹层骨架
-│  ├─ styles.css        全部样式
-│  └─ app.js            前端交互、状态、缓存、备份/同步逻辑
+│  ├─ index.html        前端页面结构、弹层骨架（按顺序加载 js/ 下的脚本）
+│  ├─ boot.js           首屏前同步执行：恢复缓存的背景与尺寸，避免闪烁
+│  ├─ styles.css        主样式
+│  ├─ settings-themes.css 设置页 / 弹窗主题样式
+│  └─ js/               前端逻辑，按功能拆分（见 docs/DEVELOPER_GUIDE.md）
 ├─ data/                Docker 持久化数据库目录（运行后生成）
 ├─ Dockerfile           Docker 镜像构建文件
 ├─ docker-compose.yml   Docker 启动配置

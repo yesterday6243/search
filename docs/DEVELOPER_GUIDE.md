@@ -30,8 +30,8 @@
 
 接手时注意：
 
-- 这里的 DOM id 在 `public/app.js` 里大量直接引用
-- 任何 id/class 改动，都要同步检查 `app.js` 和 `styles.css`
+- 这里的 DOM id 集中在 `public/js/state.js` 顶部获取，再被各功能文件直接引用
+- 任何 id/class 改动，都要同步检查 `public/js/` 和 `styles.css`
 
 ### `public/styles.css`
 
@@ -47,22 +47,33 @@
 - 近期 UI 调整主要集中在这里
 - 设置页和备份弹层按钮现在统一走冷白玻璃体系，不要再单独引入黄橙 CTA
 
-### `public/app.js`
+### `public/js/`（原 `public/app.js`，已按功能拆分）
 
-这是前端主控文件，负责：
+前端按功能拆成多个**普通脚本**（不是 ES 模块），共享同一个全局作用域，按 `index.html` 里的顺序加载：
 
-- 页面启动 `boot()`
-- 本地状态管理
-- 搜索引擎切换和搜索提交
-- 标签区渲染与拖拽
-- 设置抽屉
-- 登录/注册
-- 备份/同步弹层
-- 自定义确认弹层
-- 背景切换与本地背景快照
-- 图标缓存、本地命中、服务端共享缓存提升
+| 文件 | 负责 |
+| --- | --- |
+| `utils.js` | 格式化、转义、id、URL 解析、`fetchJson` |
+| `icons.js` | 图标来源链、本地/服务端缓存、失败冷却、页面图标发现 |
+| `store.js` | `applyState` / `updateState`、本地快照、数据清洗、设置值应用到页面 |
+| `background.js` | 背景（Bing / Picsum / 自定义）、按小时轮换、背景快照 |
+| `search.js` | 搜索框、引擎按钮/菜单、提交、本地历史、联想词、下拉键盘导航 |
+| `tag-board.js` | 首页标签区渲染、折叠展开、标签名缩放、标签搜索、滚动淡出兜底 |
+| `drag.js` | 标签与整行分类的指针拖动（iOS 风格） |
+| `settings.js` | 设置抽屉各分区、编辑器、导航、快速滚动条、保存 |
+| `quick-add.js` | 首页「＋」快速添加弹窗 |
+| `backup.js` | 云端备份页、右上角备份状态 |
+| `auth.js` | 登录 / 注册 / 退出、加载用户数据 |
+| `dialogs.js` | 遮罩、确认弹窗、toast |
+| `state.js` | DOM 引用、常量、共享可变状态（`appState`、`authState` 等） |
+| `main.js` | `bindEvents()` 与 `boot()`，最后加载 |
 
-如果要改功能，绝大多数入口都在这个文件。
+规则：
+
+- 功能文件里只写函数声明（和少量字面量变量），**不要在加载时调用其他文件的函数**；需要初始化的逻辑放进 `boot()` / `bindEvents()`
+- `state.js` 在功能文件之后、`main.js` 之前加载（它会调用 `loadIconSourceCache` / `loadPersistedBackgroundSnapshot`）
+- 新增文件时在 `index.html` 按顺序加 `<script src="/js/xxx.js">`，版本号由服务端自动加
+- 为什么不是 ES 模块：大量顶层 `let` 状态被多个函数直接重新赋值，改成 `import/export` 需要整体改写；有自动化测试后再逐步迁移
 
 ### `server.js`
 
