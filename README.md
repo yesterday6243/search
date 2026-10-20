@@ -187,6 +187,15 @@ searchindex/
 4. 右上角状态按钮现在表示“备份状态”，不再是普通消息提示器
 5. 普通操作反馈统一走页面内 toast，不走浏览器原生提示框
 
+## 运行时环境变量
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `PORT` | `3000` | 监听端口 |
+| `HOST` | `0.0.0.0` | 监听地址 |
+| `DATABASE_PATH` | `./searchindex.db` | SQLite 数据库路径 |
+| `TRUST_PROXY` | `loopback, uniquelocal` | 哪些反向代理的 `X-Forwarded-For` 可信，用于取得真实客户端 IP（登录限流依赖它）。默认信任本机与内网地址，覆盖「宿主机 nginx 反代」和「nginx → Docker」两种部署；直连公网时可设为 `false` |
+
 ## 维护约定
 
 1. 修改前先看 `OPTIMIZATION_LOG.md`

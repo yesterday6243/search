@@ -22,6 +22,12 @@ const BING_RECENT_DEFAULT = 8;
 const ICON_CACHE_MAX_ENTRIES = 300;
 const ICON_CACHE_FETCH_LIMIT = 120;
 const ICON_CACHE_ENTRY_MAX_BYTES = 512 * 1024;
+// Login brute-force protection (per client IP and per account).
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 10;
+const LOGIN_BACKOFF_AFTER = 5;
+const LOGIN_BACKOFF_BASE_MS = 1000;
+const LOGIN_LIMITER_MAX_KEYS = 10000;
 
 const defaultState = require('./default-state.json');
 
@@ -41,6 +47,9 @@ db.pragma("journal_mode = WAL");
 ensureDatabaseSchema();
 
 const app = express();
+// Behind nginx / Docker the TCP peer is the proxy; trust X-Forwarded-For only from
+// loopback and private networks so req.ip is the real client and can't be spoofed from outside.
+app.set("trust proxy", parseTrustProxySetting(process.env.TRUST_PROXY));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(publicDir));
 
@@ -145,6 +154,14 @@ app.post("/api/auth/login", (req, res) => {
   }
 
   const normalized = normalizeUsername(username);
+  const now = Date.now();
+  const limiterKeys = [`ip:${req.ip}`, `user:${normalized}`];
+  const blockedMs = getLoginRetryAfterMs(limiterKeys, now);
+  if (blockedMs > 0) {
+    sendLoginRateLimited(res, blockedMs);
+    return;
+  }
+
   const user = db
     .prepare(
       `
@@ -155,10 +172,23 @@ app.post("/api/auth/login", (req, res) => {
     )
     .get(normalized);
 
-  if (!user || !verifyPassword(password, user.password_salt, user.password_hash)) {
+  // Unknown accounts still pay for one scrypt check so response time doesn't reveal which usernames exist.
+  const passwordValid = user
+    ? verifyPassword(password, user.password_salt, user.password_hash)
+    : verifyPassword(password, DUMMY_PASSWORD.saltHex, DUMMY_PASSWORD.hashHex) && false;
+
+  if (!passwordValid) {
+    recordLoginFailure(limiterKeys, now);
+    const retryMs = getLoginRetryAfterMs(limiterKeys, now);
+    if (retryMs > 0) {
+      sendLoginRateLimited(res, retryMs, "账号或密码错误。");
+      return;
+    }
     res.status(401).json({ message: "账号或密码错误" });
     return;
   }
+
+  loginFailures.delete(`user:${normalized}`);
 
   ensureUserState(user.id);
   const sessionToken = createSession(user.id);
@@ -377,7 +407,12 @@ app.get(/^(?!\/api\/).*/, (_req, res) => {
   res.sendFile(path.join(publicDir, "index.html"));
 });
 
-app.listen(PORT, HOST, () => {
+// Express 5 passes listen errors (e.g. EADDRINUSE) to this callback instead of throwing.
+app.listen(PORT, HOST, (error) => {
+  if (error) {
+    console.error(`Failed to start on ${HOST}:${PORT}: ${error.code || error.message}`);
+    process.exit(1);
+  }
   console.log(`Search homepage is running at http://${HOST}:${PORT}`);
 });
 
@@ -531,6 +566,68 @@ function sanitizeUsername(value) {
 
 function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+const loginFailures = new Map();
+const DUMMY_PASSWORD = hashPassword(crypto.randomBytes(18).toString("hex"));
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of loginFailures) {
+    if (now - entry.windowStart > LOGIN_WINDOW_MS && entry.blockedUntil <= now) {
+      loginFailures.delete(key);
+    }
+  }
+}, 5 * 60 * 1000).unref();
+
+function parseTrustProxySetting(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "loopback, uniquelocal";
+  }
+  if (raw === "true" || raw === "false") {
+    return raw === "true";
+  }
+  return /^\d+$/.test(raw) ? Number(raw) : raw;
+}
+
+function getLoginRetryAfterMs(keys, now) {
+  return keys.reduce((longest, key) => {
+    const entry = loginFailures.get(key);
+    return entry ? Math.max(longest, entry.blockedUntil - now) : longest;
+  }, 0);
+}
+
+// Up to LOGIN_BACKOFF_AFTER failures are free; then waits double (1s, 2s, 4s…);
+// at LOGIN_MAX_FAILURES the key is locked until its 15-minute window ends.
+function recordLoginFailure(keys, now) {
+  keys.forEach((key) => {
+    let entry = loginFailures.get(key);
+    if (!entry || now - entry.windowStart > LOGIN_WINDOW_MS) {
+      entry = { count: 0, windowStart: now, blockedUntil: 0 };
+    }
+    entry.count += 1;
+    if (entry.count >= LOGIN_MAX_FAILURES) {
+      entry.blockedUntil = entry.windowStart + LOGIN_WINDOW_MS;
+    } else if (entry.count >= LOGIN_BACKOFF_AFTER) {
+      entry.blockedUntil = now + LOGIN_BACKOFF_BASE_MS * 2 ** (entry.count - LOGIN_BACKOFF_AFTER);
+    }
+    loginFailures.delete(key);
+    loginFailures.set(key, entry);
+  });
+  while (loginFailures.size > LOGIN_LIMITER_MAX_KEYS) {
+    loginFailures.delete(loginFailures.keys().next().value);
+  }
+}
+
+function sendLoginRateLimited(res, retryMs, prefix = "") {
+  const seconds = Math.max(1, Math.ceil(retryMs / 1000));
+  const wait = seconds >= 60 ? `${Math.ceil(seconds / 60)} 分钟` : `${seconds} 秒`;
+  res.set("Retry-After", String(seconds));
+  res.status(429).json({
+    message: `${prefix}尝试次数过多，请 ${wait}后再试`,
+    retryAfter: seconds,
+  });
 }
 
 function hashPassword(password) {
