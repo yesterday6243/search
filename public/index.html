@@ -443,6 +443,34 @@
       </div>
     </aside>
 
+    <aside class="auth-modal quick-add-modal hidden" id="quickAddModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="quickAddTitle">
+      <header class="modal-header">
+        <span class="modal-header-icon quick-add-preview" id="quickAddPreview" aria-hidden="true"></span>
+        <div class="modal-header-text">
+          <h2 id="quickAddTitle">添加标签</h2>
+          <p class="auth-meta" id="quickAddMeta">添加到分类</p>
+        </div>
+        <button class="modal-close-button" type="button" data-close-quick-add aria-label="关闭" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4 6.4 5Z" /></svg>
+        </button>
+      </header>
+      <form class="auth-form" id="quickAddForm" autocomplete="off" novalidate>
+        <label class="field">
+          <span>网址</span>
+          <input id="quickAddUrlInput" type="text" inputmode="url" spellcheck="false" placeholder="粘贴网址，例如 github.com" />
+        </label>
+        <label class="field">
+          <span>名称 <small class="quick-add-status" id="quickAddStatus" aria-live="polite"></small></span>
+          <input id="quickAddNameInput" type="text" maxlength="18" placeholder="粘贴网址后自动识别" />
+        </label>
+        <p class="auth-message hidden" id="quickAddMessage" role="alert"></p>
+        <div class="quick-add-actions">
+          <button class="ghost-button" type="button" data-close-quick-add>取消</button>
+          <button class="primary-button" type="submit">添加</button>
+        </div>
+      </form>
+    </aside>
+
     <div class="drawer-scrim hidden" id="drawerScrim"></div>
     <div class="notice-toast hidden" id="noticeToast" aria-live="polite"></div>
 

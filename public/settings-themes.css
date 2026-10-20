@@ -1727,3 +1727,36 @@
 .settings-drawer[data-color-theme] .settings-suggest-switch {
   margin-top: 14px;
 }
+
+/* Quick-add dialog */
+.auth-modal[data-color-theme].quick-add-modal {
+  width: min(460px, calc(100vw - 36px));
+}
+
+.quick-add-modal[data-color-theme] .quick-add-preview {
+  overflow: hidden;
+}
+
+.quick-add-modal[data-color-theme] .quick-add-preview-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.quick-add-modal[data-color-theme] .quick-add-status {
+  margin-left: 6px;
+  color: var(--theme-accent);
+  font-weight: 500;
+}
+
+.quick-add-modal[data-color-theme] .quick-add-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.quick-add-modal[data-color-theme] .quick-add-actions .ghost-button {
+  min-height: 42px;
+  border-radius: 12px;
+}

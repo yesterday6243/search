@@ -341,19 +341,38 @@ app.post("/api/icon-cache/discover", requireAuth, async (req, res) => {
       res.json({ ok: true, host, dataUrl: "" });
       return;
     }
-    db.prepare(
-      `
-        INSERT INTO app_icon_cache (host, data_url, updated_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(host) DO UPDATE SET
-          data_url = excluded.data_url,
-          updated_at = excluded.updated_at
-      `
-    ).run(host, dataUrl, new Date().toISOString());
+    storeDefaultIconCache(host, dataUrl);
     res.json({ ok: true, host, dataUrl });
   } catch (error) {
     console.warn(`icon discover skipped for ${pageUrl}:`, error?.message || error);
     res.json({ ok: true, dataUrl: "" });
+  }
+});
+
+// Site name + icon for the homepage quick-add dialog (one page fetch for both).
+app.post("/api/site-meta", requireAuth, async (req, res) => {
+  const pageUrl = sanitizeIconSourceValue(req.body?.url);
+  if (!pageUrl || pageUrl.startsWith("data:")) {
+    res.status(400).json({ message: "请输入有效的网址" });
+    return;
+  }
+  const url = new URL(pageUrl);
+  const host = url.host.replace(/^www\./, "").toLowerCase();
+  const fallbackName = getHostDisplayName(url.hostname);
+  try {
+    const { html, baseUrl } = await fetchPageDocument(pageUrl);
+    let iconDataUrl = readDefaultIconCache([host])[host] || "";
+    if (!iconDataUrl) {
+      iconDataUrl = await resolvePageIconAsDataUrl(html, baseUrl).catch(() => "");
+      if (iconDataUrl) {
+        storeDefaultIconCache(host, iconDataUrl);
+      }
+    }
+    res.json({ ok: true, host, name: extractSiteName(html) || fallbackName, iconDataUrl });
+  } catch (error) {
+    // Unreachable page: still return a usable name so the tag can be added.
+    console.warn(`site meta skipped for ${pageUrl}:`, error?.message || error);
+    res.json({ ok: true, host, name: fallbackName, iconDataUrl: readDefaultIconCache([host])[host] || "" });
   }
 });
 
@@ -1578,6 +1597,12 @@ const ICON_DISCOVER_HTML_MAX_BYTES = 1024 * 1024;
 // Reads <link rel="icon"> declarations from the page itself, for sites whose icon
 // is not at /favicon.ico (e.g. inline data: SVG icons or icons under custom paths).
 async function discoverPageIconAsDataUrl(pageUrl) {
+  const { html, baseUrl } = await fetchPageDocument(pageUrl);
+  return resolvePageIconAsDataUrl(html, baseUrl);
+}
+
+// Fetches a public page's <head> once; shared by icon discovery and site-meta.
+async function fetchPageDocument(pageUrl) {
   await assertPublicHttpUrl(pageUrl);
   const response = await fetch(pageUrl, {
     headers: {
@@ -1604,7 +1629,10 @@ async function discoverPageIconAsDataUrl(pageUrl) {
   } catch {
     baseUrl = finalUrl;
   }
+  return { html, baseUrl, finalUrl };
+}
 
+async function resolvePageIconAsDataUrl(html, baseUrl) {
   const candidates = findHtmlTags(html, "link")
     .map((attrs) => {
       const rel = String(attrs.rel || "").toLowerCase().split(/\s+/);
@@ -1779,6 +1807,59 @@ function normalizeInlineIconDataUrl(href) {
     // Keep raw payload when it is not URI-encoded.
   }
   return sanitizeDataUrl(`data:${mimeType};base64,${Buffer.from(payload, "utf8").toString("base64")}`);
+}
+
+function storeDefaultIconCache(host, dataUrl) {
+  db.prepare(
+    `
+      INSERT INTO app_icon_cache (host, data_url, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(host) DO UPDATE SET
+        data_url = excluded.data_url,
+        updated_at = excluded.updated_at
+    `
+  ).run(host, dataUrl, new Date().toISOString());
+}
+
+const SITE_NAME_MAX_LENGTH = 18;
+
+// Prefer the site's declared name (og:site_name / application-name); otherwise the most
+// name-like segment of <title> ("GitHub · Build and ship software" → "GitHub").
+function extractSiteName(html) {
+  const metas = findHtmlTags(html, "meta");
+  const declared = metas
+    .filter((attrs) => {
+      const key = String(attrs.property || attrs.name || "").toLowerCase();
+      return key === "og:site_name" || key === "application-name" || key === "apple-mobile-web-app-title";
+    })
+    .map((attrs) => cleanSiteName(attrs.content))
+    .find((name) => name && name.length <= SITE_NAME_MAX_LENGTH);
+  if (declared) {
+    return declared;
+  }
+
+  const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(String(html || ""));
+  const title = cleanSiteName(titleMatch ? decodeHtmlEntities(titleMatch[1]) : "");
+  if (!title) {
+    return "";
+  }
+  const segments = title
+    .split(/\s+[-|–—·_]\s+|\s*[|｜]\s*|[:：]\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const shortest = segments.reduce((best, segment) => (segment.length < best.length ? segment : best), segments[0] || title);
+  return shortest.slice(0, SITE_NAME_MAX_LENGTH);
+}
+
+function cleanSiteName(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+// "www.example.co.uk" → "Example"; used when the page gives no usable name.
+function getHostDisplayName(hostname) {
+  const labels = String(hostname || "").replace(/^www\./, "").split(".").filter(Boolean);
+  const main = labels.length > 2 && labels.at(-2).length <= 3 ? labels.at(-3) : labels.at(-2) || labels[0] || "";
+  return main ? (main[0].toUpperCase() + main.slice(1)).slice(0, SITE_NAME_MAX_LENGTH) : "";
 }
 
 function isProbablyValidImageDataUrl(dataUrl) {

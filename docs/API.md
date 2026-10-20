@@ -456,6 +456,40 @@
 - 多个候选时优先 SVG，其次按 `sizes` 取最大尺寸
 - 成功结果写入服务端共享图标缓存（覆盖旧值）
 
+### `POST /api/site-meta`
+
+用途：
+
+- 首页「＋」快速添加标签：粘贴网址后识别网站名称和图标（一次抓取页面同时完成）
+
+需要登录。
+
+请求体：
+
+```json
+{
+  "url": "https://vercel.com/"
+}
+```
+
+成功返回：
+
+```json
+{
+  "ok": true,
+  "host": "vercel.com",
+  "name": "Vercel",
+  "iconDataUrl": "data:image/png;base64,..."
+}
+```
+
+说明：
+
+- 名称优先取 `og:site_name` / `application-name` / `apple-mobile-web-app-title`（不超过 18 字符），否则取 `<title>` 按「 - 」「 | 」「 · 」「: 」等分隔后最短的一段
+- 页面无法访问时仍返回 200，`name` 为域名推导的名称（如 `www.example.co.uk` → `Example`），便于照常添加
+- 图标逻辑与 `/api/icon-cache/discover` 相同（共享抓取与解析代码），成功时写入服务端图标缓存
+- 与 `discover` 相同的 SSRF 防护（只允许公网 http/https）
+
 ## 6.1 搜索联想接口
 
 ### `GET /api/suggest?q=<关键词>&engine=<搜索引擎域名>`

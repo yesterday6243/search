@@ -2241,6 +2241,57 @@ body.is-tag-dragging {
   }
 }
 
+/* "+" card at the end of each category: same footprint as a tag, frosted like the expand buttons. */
+.tag-add-card {
+  display: grid;
+  place-items: center;
+  width: var(--tile-size, 92px);
+  height: var(--tile-size, 92px);
+  padding: 0;
+  border: 1.5px dashed rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-card);
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease, scale 220ms var(--ease-spring);
+}
+
+.tag-add-card svg {
+  width: 30%;
+  height: 30%;
+  fill: currentColor;
+}
+
+@media (hover: hover) {
+  .tag-add-card:hover {
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.24);
+  }
+}
+
+.tag-add-card:active {
+  scale: 0.95;
+}
+
+.tag-add-card:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 3px;
+}
+
+@media (min-width: 900px) and (max-width: 1320px) {
+  .tag-add-card {
+    border-radius: 22px;
+  }
+}
+
+@media (max-width: 899px) {
+  .tag-add-card {
+    border-radius: clamp(16px, calc(var(--tile-size) * 0.24), 22px);
+  }
+}
+
 /* Tags fade out as they scroll up under the docked search bar.
    Scroll-driven animation: runs on the compositor in lockstep with scrolling
    (the JS fallback in app.js is only used where this is unsupported). */
@@ -2250,7 +2301,7 @@ body.is-tag-dragging {
 }
 
 @supports (animation-timeline: view()) {
-  .tag-board :is(.tag-card, .category-name, .category-expand-btn) {
+  .tag-board :is(.tag-card, .tag-add-card, .category-name, .category-expand-btn) {
     animation: tag-scroll-fade linear both;
     animation-timeline: view(block calc(var(--tag-fade-line) + var(--tag-fade-distance)) 0px);
     animation-range: exit 0px exit var(--tag-fade-distance);
