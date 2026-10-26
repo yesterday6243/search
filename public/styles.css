@@ -774,7 +774,11 @@ button {
   overflow: hidden;
   overflow: clip;
   max-height: calc(var(--tile-size) + var(--lift-room));
-  transition: max-height 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* While a row collapses, its extra tiles stay painted (fading out) instead of being cut off at once. */
+.category-row.has-overflow .category-links.is-collapsing {
+  overflow: visible;
 }
 
 .category-row.has-overflow.is-expanded .category-links {

@@ -321,11 +321,77 @@ function toggleCategoryExpanded(categoryId) {
     expandedCategoryIds.delete(categoryId);
   }
 
+  // FLIP: measure, change the layout once, then animate with transforms/opacity only. Animating the
+  // height instead made the browser re-layout and repaint every row below on every frame, so expanding
+  // a category near the top of a long board dropped frames.
+  const links = row.querySelector(".category-links");
+  const rowsBelow = Array.from(tagBoard.querySelectorAll(".category-row")).filter(
+    (item) => row.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING
+  );
+  const topsBefore = rowsBelow.map((item) => item.getBoundingClientRect().top);
+  const clipBottomBefore = links?.getBoundingClientRect().bottom ?? 0;
+
   row.classList.toggle("is-expanded", nextExpanded);
   expandButton.classList.toggle("is-expanded", nextExpanded);
   expandButton.setAttribute("aria-expanded", nextExpanded ? "true" : "false");
   expandButton.setAttribute("aria-label", nextExpanded ? "收起分类标签" : "展开更多标签");
   expandButton.title = nextExpanded ? "收起分类标签" : "展开更多标签";
+
+  if (!links || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return;
+  }
+  animateCategoryExpand(links, nextExpanded, clipBottomBefore, rowsBelow, topsBefore);
+}
+
+const CATEGORY_EXPAND_DURATION_MS = 360;
+const CATEGORY_EXPAND_EASING = "cubic-bezier(0.2, 0.9, 0.25, 1)";
+
+function animateCategoryExpand(links, expanded, clipBottomBefore, rowsBelow, topsBefore) {
+  // Rows below start where they were and glide to their new place (compositor-only transform).
+  rowsBelow.forEach((item, index) => {
+    const deltaY = topsBefore[index] - item.getBoundingClientRect().top;
+    if (Math.abs(deltaY) < 0.5) {
+      return;
+    }
+    item.getAnimations().forEach((animation) => animation.id === "category-expand" && animation.cancel());
+    const animation = item.animate(
+      [{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }],
+      { duration: CATEGORY_EXPAND_DURATION_MS, easing: CATEGORY_EXPAND_EASING }
+    );
+    animation.id = "category-expand";
+  });
+
+  const tiles = Array.from(links.querySelectorAll(".tag-card, .tag-add-card"));
+  if (expanded) {
+    // Newly revealed tiles fade in with a light stagger while the rows below slide away.
+    tiles
+      .filter((tile) => tile.getBoundingClientRect().top >= clipBottomBefore - 1)
+      .forEach((tile, index) => {
+        tile.animate(
+          [
+            { opacity: 0, transform: "translateY(-6px) scale(0.96)" },
+            { opacity: 1, transform: "none" },
+          ],
+          { duration: 280, delay: Math.min(index, 14) * 14, easing: "ease-out", fill: "backwards" }
+        );
+      });
+    return;
+  }
+
+  // Collapsing: keep the hidden tiles painted while they fade out under the rows sliding up, then clip.
+  const clipBottomAfter = links.getBoundingClientRect().bottom;
+  const leaving = tiles.filter((tile) => tile.getBoundingClientRect().top >= clipBottomAfter - 1);
+  if (!leaving.length) {
+    return;
+  }
+  links.classList.add("is-collapsing");
+  const fades = leaving.map((tile) =>
+    tile.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-in", fill: "forwards" })
+  );
+  window.setTimeout(() => {
+    links.classList.remove("is-collapsing");
+    fades.forEach((animation) => animation.cancel());
+  }, 220);
 }
 
 function toggleHomeTagSearch() {
