@@ -346,52 +346,46 @@ function toggleCategoryExpanded(categoryId) {
 const CATEGORY_EXPAND_DURATION_MS = 360;
 const CATEGORY_EXPAND_EASING = "cubic-bezier(0.2, 0.9, 0.25, 1)";
 
+// Drawer-style: tiles stay fully opaque; the row's clip edge and the rows below move together.
+// Expanding reveals the extra tiles in place, collapsing covers them — nothing fades or is delayed.
 function animateCategoryExpand(links, expanded, clipBottomBefore, rowsBelow, topsBefore) {
-  // Rows below start where they were and glide to their new place (compositor-only transform).
+  const timing = { duration: CATEGORY_EXPAND_DURATION_MS, easing: CATEGORY_EXPAND_EASING };
   rowsBelow.forEach((item, index) => {
     const deltaY = topsBefore[index] - item.getBoundingClientRect().top;
     if (Math.abs(deltaY) < 0.5) {
       return;
     }
     item.getAnimations().forEach((animation) => animation.id === "category-expand" && animation.cancel());
-    const animation = item.animate(
-      [{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }],
-      { duration: CATEGORY_EXPAND_DURATION_MS, easing: CATEGORY_EXPAND_EASING }
-    );
+    const animation = item.animate([{ transform: `translateY(${deltaY}px)` }, { transform: "translateY(0)" }], timing);
     animation.id = "category-expand";
   });
 
-  const tiles = Array.from(links.querySelectorAll(".tag-card, .tag-add-card"));
-  if (expanded) {
-    // Newly revealed tiles fade in with a light stagger while the rows below slide away.
-    tiles
-      .filter((tile) => tile.getBoundingClientRect().top >= clipBottomBefore - 1)
-      .forEach((tile, index) => {
-        tile.animate(
-          [
-            { opacity: 0, transform: "translateY(-6px) scale(0.96)" },
-            { opacity: 1, transform: "none" },
-          ],
-          { duration: 280, delay: Math.min(index, 14) * 14, easing: "ease-out", fill: "backwards" }
-        );
-      });
-    return;
-  }
-
-  // Collapsing: keep the hidden tiles painted while they fade out under the rows sliding up, then clip.
   const clipBottomAfter = links.getBoundingClientRect().bottom;
-  const leaving = tiles.filter((tile) => tile.getBoundingClientRect().top >= clipBottomAfter - 1);
-  if (!leaving.length) {
+  const travel = Math.abs(clipBottomAfter - clipBottomBefore);
+  if (travel < 0.5) {
     return;
   }
+  links.getAnimations().forEach((animation) => animation.id === "category-clip" && animation.cancel());
+  if (expanded) {
+    // Box is already full height: start clipped at the old edge and open to the full height.
+    const clip = links.animate([{ clipPath: `inset(0 0 ${travel}px 0)` }, { clipPath: "inset(0 0 0 0)" }], timing);
+    clip.id = "category-clip";
+    return;
+  }
+  // Box is already collapsed: keep the overflow painted, clip from the old (expanded) edge down to the new one.
   links.classList.add("is-collapsing");
-  const fades = leaving.map((tile) =>
-    tile.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: "ease-in", fill: "forwards" })
-  );
-  window.setTimeout(() => {
+  const clip = links.animate([{ clipPath: `inset(0 0 -${travel}px 0)` }, { clipPath: "inset(0 0 0 0)" }], timing);
+  clip.id = "category-clip";
+  let done = false;
+  const finish = () => {
+    if (done) {
+      return;
+    }
+    done = true;
     links.classList.remove("is-collapsing");
-    fades.forEach((animation) => animation.cancel());
-  }, 220);
+  };
+  clip.finished.then(finish, finish);
+  window.setTimeout(finish, CATEGORY_EXPAND_DURATION_MS + 80);
 }
 
 function toggleHomeTagSearch() {
