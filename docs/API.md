@@ -239,6 +239,38 @@
 - `summary` 是备份内容摘要（分类数、标签数、引擎数、JSON 字节数），供备份页列表展示
 - `POST` / `PATCH` / `DELETE` 备份接口返回的 `backups` 列表结构相同，也带 `backupLimit`
 
+### `PUT /api/backups/auto`
+
+用途：
+
+- 写入（覆盖）当前用户唯一的一份自动备份。前端在最后一次改动 30 秒后调用，离开页面时用 `keepalive` 立即调用
+
+需要登录。
+
+请求体：与 `POST /api/backups` 相同（`{ "state": { ... } }`）
+
+成功返回：
+
+```json
+{
+  "ok": true,
+  "autoBackup": {
+    "id": "15",
+    "name": "自动备份",
+    "kind": "auto",
+    "createdAt": "2026-10-26T15:42:10.000Z",
+    "summary": { "categories": 4, "links": 60, "engines": 8, "bytes": 5413 }
+  }
+}
+```
+
+说明：
+
+- 数据表 `user_backups` 新增 `kind` 列（`manual` / `auto`，老数据迁移为 `manual`）
+- 每个用户最多一条 `auto`；不计入手动备份上限，也不会被手动备份的清理删掉
+- 自动备份不能重命名或删除（`PATCH` / `DELETE` 返回 404），但可以用 `GET /api/backups/:backupId` 恢复
+- `GET /api/backups` 以及创建 / 重命名 / 删除手动备份的返回里都带 `autoBackup`（没有时为 `null`），`backups` 只包含手动备份
+
 ### `GET /api/backups/:backupId`
 
 用途：

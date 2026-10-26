@@ -245,9 +245,18 @@ app.put("/api/state", requireAuth, (req, res) => {
 
 app.get("/api/backups", requireAuth, (req, res) => {
   res.json({
-    backups: listUserBackups(req.authUser.id),
-    backupLimit: USER_BACKUP_LIMIT,
+    ...getBackupListPayload(req.authUser.id),
   });
+});
+
+// Auto backup: the client calls this ~30s after the last local change (debounced).
+app.put("/api/backups/auto", requireAuth, (req, res) => {
+  const inputState = req.body?.state;
+  if (!inputState || typeof inputState !== "object" || Array.isArray(inputState)) {
+    res.status(400).json({ message: "state is required" });
+    return;
+  }
+  res.json({ ok: true, autoBackup: saveAutoBackup(req.authUser.id, inputState) });
 });
 
 app.get("/api/backups/:backupId", requireAuth, (req, res) => {
@@ -286,8 +295,7 @@ app.patch("/api/backups/:backupId", requireAuth, (req, res) => {
   res.json({
     ok: true,
     backup,
-    backups: listUserBackups(req.authUser.id),
-    backupLimit: USER_BACKUP_LIMIT,
+    ...getBackupListPayload(req.authUser.id),
   });
 });
 
@@ -299,8 +307,7 @@ app.delete("/api/backups/:backupId", requireAuth, (req, res) => {
   }
   res.json({
     ok: true,
-    backups: listUserBackups(req.authUser.id),
-    backupLimit: USER_BACKUP_LIMIT,
+    ...getBackupListPayload(req.authUser.id),
   });
 });
 
@@ -509,6 +516,12 @@ function ensureDatabaseSchema() {
 
   try {
     db.prepare(`ALTER TABLE user_backups ADD COLUMN name TEXT NOT NULL DEFAULT ''`).run();
+  } catch {}
+
+  // "manual" backups are user-created (kept up to USER_BACKUP_LIMIT); each user also has at most
+  // one "auto" backup that is overwritten after every change.
+  try {
+    db.prepare(`ALTER TABLE user_backups ADD COLUMN kind TEXT NOT NULL DEFAULT 'manual'`).run();
   } catch {}
 
   db.prepare(`
@@ -1026,7 +1039,7 @@ function listUserBackups(userId) {
       `
         SELECT id, name, data, created_at
         FROM user_backups
-        WHERE user_id = ?
+        WHERE user_id = ? AND kind = 'manual'
         ORDER BY created_at DESC, id DESC
         LIMIT ${USER_BACKUP_LIMIT}
       `
@@ -1055,6 +1068,43 @@ function summarizeBackupData(rawData) {
     links: categories.reduce((total, category) => total + (Array.isArray(category?.links) ? category.links.length : 0), 0),
     engines: Array.isArray(state?.engines) ? state.engines.length : 0,
     bytes: Buffer.byteLength(text, "utf8"),
+  };
+}
+
+const AUTO_BACKUP_NAME = "自动备份";
+
+function getAutoBackup(userId) {
+  const row = db
+    .prepare(`SELECT id, data, created_at FROM user_backups WHERE user_id = ? AND kind = 'auto' ORDER BY id DESC LIMIT 1`)
+    .get(userId);
+  return row
+    ? { id: String(row.id), name: AUTO_BACKUP_NAME, kind: "auto", createdAt: row.created_at, summary: summarizeBackupData(row.data) }
+    : null;
+}
+
+// Overwrites the user's single auto backup (created on first use).
+function saveAutoBackup(userId, inputState) {
+  const state = JSON.stringify(sanitizeState(inputState, defaultState));
+  const savedAt = new Date().toISOString();
+  const updated = db
+    .prepare(`UPDATE user_backups SET data = ?, created_at = ?, name = ? WHERE user_id = ? AND kind = 'auto'`)
+    .run(state, savedAt, AUTO_BACKUP_NAME, userId);
+  if (!updated.changes) {
+    db.prepare(`INSERT INTO user_backups (user_id, name, data, created_at, kind) VALUES (?, ?, ?, ?, 'auto')`).run(
+      userId,
+      AUTO_BACKUP_NAME,
+      state,
+      savedAt
+    );
+  }
+  return getAutoBackup(userId);
+}
+
+function getBackupListPayload(userId) {
+  return {
+    backups: listUserBackups(userId),
+    autoBackup: getAutoBackup(userId),
+    backupLimit: USER_BACKUP_LIMIT,
   };
 }
 
@@ -1092,8 +1142,8 @@ function createUserBackup(userId, inputState) {
   const backupName = formatBackupName(createdAt);
   const insert = db.prepare(
     `
-      INSERT INTO user_backups (user_id, name, data, created_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO user_backups (user_id, name, data, created_at, kind)
+      VALUES (?, ?, ?, ?, 'manual')
     `
   ).run(userId, backupName, JSON.stringify(state), createdAt);
 
@@ -1101,10 +1151,11 @@ function createUserBackup(userId, inputState) {
     `
       DELETE FROM user_backups
       WHERE user_id = ?
+        AND kind = 'manual'
         AND id NOT IN (
           SELECT id
           FROM user_backups
-          WHERE user_id = ?
+          WHERE user_id = ? AND kind = 'manual'
           ORDER BY created_at DESC, id DESC
           LIMIT ${USER_BACKUP_LIMIT}
         )
@@ -1115,8 +1166,7 @@ function createUserBackup(userId, inputState) {
     id: String(insert.lastInsertRowid),
     name: backupName,
     createdAt,
-    backups: listUserBackups(userId),
-    backupLimit: USER_BACKUP_LIMIT,
+    ...getBackupListPayload(userId),
   };
 }
 
@@ -1131,7 +1181,7 @@ function renameUserBackup(userId, backupId, backupName) {
       `
         UPDATE user_backups
         SET name = ?
-        WHERE user_id = ? AND id = ?
+        WHERE user_id = ? AND id = ? AND kind = 'manual'
       `
     )
     .run(backupName, userId, numericId);
@@ -1153,7 +1203,7 @@ function deleteUserBackup(userId, backupId) {
     .prepare(
       `
         DELETE FROM user_backups
-        WHERE user_id = ? AND id = ?
+        WHERE user_id = ? AND id = ? AND kind = 'manual'
       `
     )
     .run(userId, numericId);

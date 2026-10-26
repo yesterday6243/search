@@ -287,6 +287,13 @@ let quickAddLookupController = null;
 let quickAddLookupPromise = null;
 let quickAddLookupUrl = "";
 let syncModalBackupLimit = 10;
+let syncModalAutoBackup = null;
+// Auto backup: each local change restarts a 30s timer; when it fires, everything is saved at once.
+const AUTO_BACKUP_DELAY_MS = 30 * 1000;
+const AUTO_BACKUP_RETRY_MS = 60 * 1000;
+let autoBackupTimer = 0;
+let autoBackupInFlight = null;
+let localChangeVersion = 0;
 let syncModalLoaded = false;
 let settingsTrailFrame = 0;
 let settingsQuickScrollFrame = 0;

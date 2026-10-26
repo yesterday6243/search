@@ -1760,3 +1760,13 @@
   min-height: 42px;
   border-radius: 12px;
 }
+
+/* Pinned auto backup row */
+.sync-modal[data-color-theme] .sync-backup-item.is-auto {
+  background: color-mix(in srgb, var(--theme-accent) 5%, white);
+}
+
+.sync-modal[data-color-theme] .sync-backup-badge.is-auto {
+  color: #fff;
+  background: var(--theme-accent);
+}

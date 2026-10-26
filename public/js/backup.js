@@ -39,7 +39,7 @@ function closeSyncModal() {
 function renderSyncModalMeta() {
   if (syncModalMeta) {
     syncModalMeta.textContent = authState.loggedIn
-      ? `已登录 ${authState.username || ""} · 数据只在你手动备份时上传`
+      ? `已登录 ${authState.username || ""} · 改动会自动备份，也可随时手动备份`
       : "登录后可管理云端备份与同步。";
   }
   renderSyncModalStatus();
@@ -61,12 +61,19 @@ function renderSyncModalStatus() {
     tone = "default";
     title = "尚未登录";
     detail = "登录后即可把首页配置备份到云端。";
+  } else if (autoBackupInFlight) {
+    tone = "warning";
+    title = "正在自动备份…";
+    detail = "正在把最新改动保存到云端。";
   } else if (meta.dirty) {
     tone = "warning";
     title = "有未备份的改动";
-    detail = latest?.createdAt
-      ? `上次备份于 ${formatRelativeTime(latest.createdAt)}，之后的改动只保存在本机。`
+    detail = autoBackupTimer
+      ? "停止修改 30 秒后会自动备份，也可以立即创建一份手动备份。"
       : "当前改动只保存在本机，建议立即备份。";
+  } else if (syncModalAutoBackup?.createdAt) {
+    title = "已自动备份";
+    detail = `最近一次自动备份 ${formatRelativeTime(syncModalAutoBackup.createdAt)}，改动后会自动更新。`;
   } else if (meta.lastAction === "sync" && meta.lastActionAt) {
     title = "已从云端恢复";
     detail = `${formatRelativeTime(meta.lastActionAt)}同步到本机`;
@@ -146,7 +153,45 @@ async function refreshBackupList() {
   }
 }
 
+function getBackupStatsText(summary = {}) {
+  return [
+    Number.isFinite(summary.categories) ? `${summary.categories} 个分类` : "",
+    Number.isFinite(summary.links) ? `${summary.links} 个标签` : "",
+    Number.isFinite(summary.engines) ? `${summary.engines} 个引擎` : "",
+    summary.bytes ? formatByteSize(summary.bytes) : "",
+  ].filter(Boolean);
+}
+
+// The single auto backup, pinned above the manual list: restore only (no rename / delete).
+function renderAutoBackupRow(backup) {
+  const backupId = escapeAttribute(backup.id || "");
+  const createdAt = backup.createdAt || "";
+  return `
+    <article class="sync-backup-item is-auto">
+      <span class="sync-backup-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 4a8 8 0 0 1 7.75 6H22l-3.5 4-3.5-4h2.67A6 6 0 1 0 12 18a5.96 5.96 0 0 0 4.24-1.76l1.42 1.42A8 8 0 1 1 12 4Zm-1 4h2v4.59l3.2 3.2-1.4 1.42L11 13.41V8Z" /></svg>
+      </span>
+      <div class="sync-backup-body">
+        <div class="sync-backup-title-row">
+          <p class="sync-backup-title">自动备份</p>
+          <span class="sync-backup-badge is-auto">自动</span>
+        </div>
+        <p class="sync-backup-meta">
+          <time datetime="${escapeAttribute(createdAt)}" title="${escapeAttribute(createdAt ? formatPreciseTime(createdAt) : "")}">${escapeHtml(createdAt ? formatRelativeTime(createdAt) : "未知时间")}</time>
+          ${getBackupStatsText(backup.summary).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </p>
+      </div>
+      <div class="sync-backup-actions">
+        <button class="ghost-button sync-backup-restore" type="button" data-backup-action="restore" data-backup-id="${backupId}">恢复</button>
+      </div>
+    </article>
+  `;
+}
+
 function applyBackupLimit(payload) {
+  if (payload && "autoBackup" in payload) {
+    syncModalAutoBackup = payload.autoBackup || null;
+  }
   const limit = Number(payload?.backupLimit);
   if (Number.isInteger(limit) && limit > 0) {
     syncModalBackupLimit = limit;
@@ -158,7 +203,7 @@ function renderBackupList() {
     return;
   }
   if (syncBackupCount) {
-    syncBackupCount.textContent = syncModalLoaded ? `${syncModalBackups.length} / ${syncModalBackupLimit}` : "";
+    syncBackupCount.textContent = syncModalLoaded ? `手动 ${syncModalBackups.length} / ${syncModalBackupLimit}` : "";
   }
   renderSyncModalStatus();
 
@@ -167,8 +212,9 @@ function renderBackupList() {
     return;
   }
 
+  const autoRow = syncModalAutoBackup ? renderAutoBackupRow(syncModalAutoBackup) : "";
   if (!syncModalBackups.length) {
-    syncBackupList.innerHTML = `
+    syncBackupList.innerHTML = autoRow + `
       <div class="sync-backup-empty">
         <span class="sync-backup-empty-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M6.5 19a4.5 4.5 0 0 1-.67-8.95A6 6 0 0 1 17.5 8.6 4.25 4.25 0 0 1 17.25 19H6.5Z" /></svg>
@@ -180,7 +226,7 @@ function renderBackupList() {
     return;
   }
 
-  syncBackupList.innerHTML = syncModalBackups
+  syncBackupList.innerHTML = autoRow + syncModalBackups
     .map((backup, index) => {
       const backupId = escapeAttribute(backup.id || "");
       const createdAt = backup.createdAt || "";
@@ -365,6 +411,7 @@ async function handleDeleteBackup(backupId) {
       method: "DELETE",
     });
     syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : [];
+    applyBackupLimit(payload);
     renderBackupList();
     setSyncModalMessage("云端备份已删除。", "success");
     showNotice("云端备份已删除", "success");
@@ -416,7 +463,7 @@ function getCurrentSyncMeta() {
   return {
     username: authState.username,
     dirty: Boolean(entry.dirty),
-    lastAction: entry.lastAction === "backup" || entry.lastAction === "sync" ? entry.lastAction : "",
+    lastAction: ["backup", "sync", "auto"].includes(entry.lastAction) ? entry.lastAction : "",
     lastActionAt:
       typeof entry.lastActionAt === "string" && entry.lastActionAt.trim()
         ? entry.lastActionAt.trim()
@@ -431,7 +478,7 @@ function saveCurrentSyncMeta(meta) {
   const nextMeta = {
     username: authState.username,
     dirty: Boolean(meta?.dirty),
-    lastAction: meta?.lastAction === "backup" || meta?.lastAction === "sync" ? meta.lastAction : "",
+    lastAction: ["backup", "sync", "auto"].includes(meta?.lastAction) ? meta.lastAction : "",
     lastActionAt:
       typeof meta?.lastActionAt === "string" && meta.lastActionAt.trim()
         ? meta.lastActionAt.trim()
@@ -446,12 +493,90 @@ function markSyncDirty() {
   if (!authState.loggedIn) {
     return;
   }
+  localChangeVersion += 1;
   const meta = getCurrentSyncMeta();
   saveCurrentSyncMeta({
     ...meta,
     dirty: true,
   });
+  scheduleAutoBackup();
   renderSyncStatus();
+}
+
+// Debounced: every change restarts the timer, so a burst of edits is saved once, 30s after the last one.
+function scheduleAutoBackup(delay = AUTO_BACKUP_DELAY_MS) {
+  if (!authState.loggedIn) {
+    return;
+  }
+  window.clearTimeout(autoBackupTimer);
+  autoBackupTimer = window.setTimeout(() => {
+    autoBackupTimer = 0;
+    void runAutoBackup();
+  }, delay);
+}
+
+function hasPendingAutoBackup() {
+  return Boolean(autoBackupTimer || autoBackupInFlight);
+}
+
+async function runAutoBackup({ keepalive = false } = {}) {
+  if (!authState.loggedIn || !appState) {
+    return;
+  }
+  if (autoBackupInFlight) {
+    // A save is already running; make sure the newer changes get their own save afterwards.
+    await autoBackupInFlight;
+    if (getCurrentSyncMeta().dirty) {
+      scheduleAutoBackup(0);
+    }
+    return;
+  }
+  window.clearTimeout(autoBackupTimer);
+  autoBackupTimer = 0;
+  const savedVersion = localChangeVersion;
+  const request = fetchJson("/api/backups/auto", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    keepalive,
+    body: JSON.stringify({
+      state: {
+        settings: appState.settings,
+        engines: appState.engines,
+        selectedEngineId: appState.selectedEngineId,
+        categories: appState.categories,
+      },
+    }),
+  });
+  autoBackupInFlight = request;
+  renderSyncStatus();
+  try {
+    const payload = await request;
+    syncModalAutoBackup = payload?.autoBackup || syncModalAutoBackup;
+    // Only clear "unbacked" if nothing changed while the request was in flight.
+    if (localChangeVersion === savedVersion) {
+      markSyncAction("auto");
+    }
+    if (syncModal && !syncModal.classList.contains("hidden")) {
+      renderBackupList();
+    }
+  } catch (error) {
+    console.warn("auto backup failed, will retry", error);
+    if (error?.status === 401) {
+      return;
+    }
+    scheduleAutoBackup(AUTO_BACKUP_RETRY_MS);
+  } finally {
+    autoBackupInFlight = null;
+    renderSyncStatus();
+  }
+}
+
+// Leaving the page (tab hidden / closed / logout) shouldn't lose the last 30s of changes.
+function flushAutoBackup({ keepalive = false } = {}) {
+  if (!autoBackupTimer || !authState.loggedIn) {
+    return autoBackupInFlight || Promise.resolve();
+  }
+  return runAutoBackup({ keepalive });
 }
 
 function markSyncAction(action) {
@@ -480,9 +605,15 @@ function renderSyncStatus() {
     tone = "default";
   } else {
     const meta = getCurrentSyncMeta();
-    if (meta.dirty) {
-      message = "未备份改动";
+    if (autoBackupInFlight) {
+      message = "正在自动备份…";
       tone = "warning";
+    } else if (meta.dirty) {
+      message = autoBackupTimer ? "待自动备份" : "未备份改动";
+      tone = "warning";
+    } else if (meta.lastAction === "auto" && meta.lastActionAt) {
+      message = `已自动备份 · ${formatTime(meta.lastActionAt)}`;
+      tone = "success";
     } else if (meta.lastAction === "backup" && meta.lastActionAt) {
       message = `已备份数据 · ${formatTime(meta.lastActionAt)}`;
       tone = "success";

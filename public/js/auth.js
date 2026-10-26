@@ -242,6 +242,9 @@ async function handleLogout() {
     return;
   }
 
+  await flushAutoBackup().catch(() => {});
+  window.clearTimeout(autoBackupTimer);
+  autoBackupTimer = 0;
   try {
     await fetchJson("/api/auth/logout", { method: "POST" });
   } catch (error) {

@@ -19,6 +19,9 @@ async function boot() {
       cachedStatePayload?.username === authState.username && getCurrentSyncMeta().dirty;
     if (!hasUnsyncedLocalState) {
       await hydratePreferredUserStateOnce({ silent: true });
+    } else {
+      // Changes from a previous visit that never reached the cloud.
+      scheduleAutoBackup();
     }
   } else {
     clearPersistedStateSnapshot();
@@ -28,6 +31,15 @@ async function boot() {
 }
 
 function bindEvents() {
+  // keepalive lets the auto-backup request finish even if the tab is being closed.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      void flushAutoBackup({ keepalive: true });
+    }
+  });
+  window.addEventListener("pagehide", () => {
+    void flushAutoBackup({ keepalive: true });
+  });
   // Icon <img> load/error handling is delegated (capture phase, since these events don't bubble)
   // instead of inline onload/onerror attributes, so the CSP can forbid inline handlers.
   document.addEventListener("load", handleManagedIconEvent, true);
