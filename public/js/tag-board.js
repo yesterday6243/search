@@ -112,6 +112,31 @@ function renderTagBoard() {
   queueTagLabelFit();
   queueTagViewportFadeUpdate();
   queueIconReadyStateCheck();
+  scheduleHiddenIconPreload();
+}
+
+// Visible tile icons load first (lazy); icons in collapsed rows follow as soon as the browser is idle,
+// so they are already there when a row is expanded.
+let hiddenIconPreloadHandle = 0;
+
+function scheduleHiddenIconPreload() {
+  const run = () => {
+    hiddenIconPreloadHandle = 0;
+    loadLazyIcons(tagBoard);
+  };
+  if (hiddenIconPreloadHandle) {
+    return;
+  }
+  hiddenIconPreloadHandle =
+    typeof window.requestIdleCallback === "function"
+      ? window.requestIdleCallback(run, { timeout: 1500 })
+      : window.setTimeout(run, 800);
+}
+
+function loadLazyIcons(root) {
+  root?.querySelectorAll('img.mx-icon-image[loading="lazy"]').forEach((image) => {
+    image.loading = "eager";
+  });
 }
 
 function queueTagLabelFit() {
@@ -325,6 +350,10 @@ function toggleCategoryExpanded(categoryId) {
   // height instead made the browser re-layout and repaint every row below on every frame, so expanding
   // a category near the top of a long board dropped frames.
   const links = row.querySelector(".category-links");
+  loadLazyIcons(links);
+  if (!nextExpanded) {
+    reserveScrollSpaceForCollapse(links);
+  }
   const rowsBelow = Array.from(tagBoard.querySelectorAll(".category-row")).filter(
     (item) => row.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING
   );
@@ -341,6 +370,50 @@ function toggleCategoryExpanded(categoryId) {
     return;
   }
   animateCategoryExpand(links, nextExpanded, clipBottomBefore, rowsBelow, topsBefore);
+}
+
+// ---- Scroll reserve -------------------------------------------------------------------------
+// Collapsing a row near the bottom makes the page shorter than the current scroll position allows, so
+// the browser clamps scrollTop and everything on screen (the clicked row included) jumps. Instead we
+// keep an invisible spacer below the board that holds the page height, and give it back as the user
+// scrolls up — the spacer is always below the viewport, so nothing visible ever moves.
+let scrollReserveNode = null;
+
+function getScrollReserveNode() {
+  if (!scrollReserveNode) {
+    scrollReserveNode = document.createElement("div");
+    scrollReserveNode.className = "scroll-reserve";
+    scrollReserveNode.setAttribute("aria-hidden", "true");
+    tagBoard.after(scrollReserveNode);
+    window.addEventListener("scroll", releaseScrollReserve, { passive: true });
+    window.addEventListener("resize", releaseScrollReserve, { passive: true });
+  }
+  return scrollReserveNode;
+}
+
+function reserveScrollSpaceForCollapse(links) {
+  if (!links) {
+    return;
+  }
+  const node = getScrollReserveNode();
+  const current = node.offsetHeight;
+  // Upper bound of the height the collapse can remove; trimmed to the exact need after layout.
+  node.style.height = `${current + links.getBoundingClientRect().height}px`;
+  window.requestAnimationFrame(releaseScrollReserve);
+}
+
+function releaseScrollReserve() {
+  const node = scrollReserveNode;
+  if (!node || !node.offsetHeight) {
+    return;
+  }
+  const scroller = document.scrollingElement;
+  const reserve = node.offsetHeight;
+  const contentHeight = scroller.scrollHeight - reserve;
+  const needed = Math.max(0, Math.ceil(scroller.scrollTop + scroller.clientHeight - contentHeight));
+  if (needed < reserve) {
+    node.style.height = needed ? `${needed}px` : "";
+  }
 }
 
 const CATEGORY_EXPAND_DURATION_MS = 360;
@@ -374,7 +447,11 @@ function animateCategoryExpand(links, expanded, clipBottomBefore, rowsBelow, top
   }
   // Box is already collapsed: keep the overflow painted, clip from the old (expanded) edge down to the new one.
   links.classList.add("is-collapsing");
-  const clip = links.animate([{ clipPath: `inset(0 0 -${travel}px 0)` }, { clipPath: "inset(0 0 0 0)" }], timing);
+  // fill: forwards keeps the clip applied until cleanup, so there is no frame where the tiles show.
+  const clip = links.animate([{ clipPath: `inset(0 0 -${travel}px 0)` }, { clipPath: "inset(0 0 0 0)" }], {
+    ...timing,
+    fill: "forwards",
+  });
   clip.id = "category-clip";
   let done = false;
   const finish = () => {
@@ -383,6 +460,7 @@ function animateCategoryExpand(links, expanded, clipBottomBefore, rowsBelow, top
     }
     done = true;
     links.classList.remove("is-collapsing");
+    clip.cancel();
   };
   clip.finished.then(finish, finish);
   window.setTimeout(finish, CATEGORY_EXPAND_DURATION_MS + 80);
