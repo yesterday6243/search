@@ -46,6 +46,7 @@ const bingBackgroundCacheByCount = new Map();
 const db = new Database(databasePath);
 db.pragma("journal_mode = WAL");
 ensureDatabaseSchema();
+purgePlaceholderIconCache();
 
 const app = express();
 // Behind nginx / Docker the TCP peer is the proxy; trust X-Forwarded-For only from
@@ -1199,7 +1200,7 @@ async function promoteDefaultIconCacheEntries(entries) {
   for (const entry of incoming) {
     const host = sanitizeIconHost(entry.host);
     const source = sanitizeIconSourceValue(entry.source);
-    if (!host || !source || existingCache[host]) {
+    if (!host || !source || existingCache[host] || isPlaceholderIconSource(source)) {
       continue;
     }
 
@@ -1207,7 +1208,7 @@ async function promoteDefaultIconCacheEntries(entries) {
       const dataUrl = source.startsWith("data:")
         ? sanitizeDataUrl(source)
         : await fetchRemoteIconAsDataUrl(source);
-      if (!dataUrl) {
+      if (!dataUrl || isPlaceholderIconDataUrl(dataUrl)) {
         continue;
       }
 
@@ -1630,7 +1631,8 @@ function sanitizeDataUrl(value) {
 async function fetchRemoteIconAsDataUrl(sourceUrl) {
   const response = await fetch(sourceUrl, {
     headers: {
-      "User-Agent": "mx-search/1.0",
+      ...BROWSER_FETCH_HEADERS,
+      Accept: "image/avif,image/webp,image/svg+xml,image/*,*/*;q=0.8",
     },
     redirect: "follow",
     signal: AbortSignal.timeout(15000),
@@ -1640,29 +1642,95 @@ async function fetchRemoteIconAsDataUrl(sourceUrl) {
     throw new Error(`icon fetch failed: ${response.status}`);
   }
 
-  const mimeType = normalizeIconMimeType(response.headers.get("content-type"), sourceUrl);
-  if (!mimeType) {
-    throw new Error("icon content-type is not supported");
-  }
-
   const arrayBuffer = await response.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   if (!buffer.length || buffer.length > ICON_CACHE_ENTRY_MAX_BYTES) {
     throw new Error("icon payload size is invalid");
   }
+  // Trust the bytes over the headers: real servers send icons as octet-stream / text/plain,
+  // and URLs like favicon.ico?v=2 defeat extension checks.
+  const mimeType = sniffImageMimeType(buffer) || normalizeIconMimeType(response.headers.get("content-type"), sourceUrl);
+  if (!mimeType) {
+    throw new Error("icon content-type is not supported");
+  }
   if (!isProbablyValidImageBuffer(buffer, mimeType)) {
     throw new Error("icon payload content is invalid");
+  }
+  if (isPlaceholderIconBuffer(buffer)) {
+    throw new Error("icon is a generic placeholder");
   }
 
   return `data:${mimeType};base64,${buffer.toString("base64")}`;
 }
 
+function sniffImageMimeType(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) {
+    return "";
+  }
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return "image/png";
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (buffer.subarray(0, 4).toString("ascii") === "GIF8") {
+    return "image/gif";
+  }
+  if (buffer.length >= 12 && buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
+    return "image/webp";
+  }
+  if (buffer[0] === 0x00 && buffer[1] === 0x00 && (buffer[2] === 0x01 || buffer[2] === 0x02) && buffer[3] === 0x00) {
+    return "image/x-icon";
+  }
+  const head = buffer.subarray(0, 1024).toString("utf8").replace(/^\uFEFF/, "").trimStart().toLowerCase();
+  if ((head.startsWith("<?xml") || head.startsWith("<svg") || head.startsWith("<!--")) && head.includes("<svg")) {
+    return "image/svg+xml";
+  }
+  return "";
+}
+
+// unavatar.io serves its own logo (byte-identical) for any site it doesn't know.
+function isPlaceholderIconBuffer(buffer) {
+  return Buffer.isBuffer(buffer) && buffer.subarray(0, 2048).toString("utf8").includes("<title>unavatar</title>");
+}
+
+function isPlaceholderIconDataUrl(dataUrl) {
+  const match = /^data:[^,]*;base64,(.*)$/i.exec(String(dataUrl || ""));
+  return Boolean(match) && isPlaceholderIconBuffer(Buffer.from(match[1].slice(0, 4096), "base64"));
+}
+
+function isPlaceholderIconSource(sourceUrl) {
+  try {
+    const host = new URL(sourceUrl).hostname.toLowerCase();
+    return PLACEHOLDER_ICON_HOSTS.some((item) => host === item || host.endsWith(`.${item}`));
+  } catch {
+    return false;
+  }
+}
+
 const ICON_DISCOVER_HTML_MAX_BYTES = 1024 * 1024;
+// Some sites reject non-browser user agents, so page/icon fetches look like a normal browser.
+const BROWSER_FETCH_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36",
+  "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+};
+// Icon services that answer unknown sites with a generic 200 image; never trust or share their output.
+const PLACEHOLDER_ICON_HOSTS = ["unavatar.io", "icon.horse"];
+const ICON_FALLBACK_PATHS = ["/apple-touch-icon.png", "/favicon.svg", "/favicon.ico", "/favicon.png"];
+const ICON_MAX_CANDIDATE_ATTEMPTS = 8;
 
 // Reads <link rel="icon"> declarations from the page itself, for sites whose icon
 // is not at /favicon.ico (e.g. inline data: SVG icons or icons under custom paths).
 async function discoverPageIconAsDataUrl(pageUrl) {
-  const { html, baseUrl } = await fetchPageDocument(pageUrl);
+  let html = "";
+  let baseUrl = pageUrl;
+  try {
+    ({ html, baseUrl } = await fetchPageDocument(pageUrl));
+  } catch (error) {
+    // Bot-blocking or JS-only pages: the standard root icon paths often still work.
+    console.warn(`icon discover: page unavailable for ${pageUrl}:`, error?.message || error);
+  }
   return resolvePageIconAsDataUrl(html, baseUrl);
 }
 
@@ -1671,7 +1739,7 @@ async function fetchPageDocument(pageUrl) {
   await assertPublicHttpUrl(pageUrl);
   const response = await fetch(pageUrl, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; mx-search/1.0)",
+      ...BROWSER_FETCH_HEADERS,
       Accept: "text/html,application/xhtml+xml",
     },
     redirect: "follow",
@@ -1720,7 +1788,31 @@ async function resolvePageIconAsDataUrl(html, baseUrl) {
     .filter(Boolean)
     .sort((a, b) => b.score - a.score);
 
+  const manifestHref = findHtmlTags(html, "link")
+    .filter((attrs) => String(attrs.rel || "").toLowerCase().split(/\s+/).includes("manifest"))
+    .map((attrs) => String(attrs.href || "").trim())
+    .find(Boolean);
+  if (manifestHref) {
+    candidates.push(...(await readManifestIconCandidates(manifestHref, baseUrl)));
+  }
+  let origin = "";
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    origin = "";
+  }
+  if (origin) {
+    candidates.push(...ICON_FALLBACK_PATHS.map((iconPath) => ({ href: `${origin}${iconPath}`, score: 0 })));
+  }
+
+  const seen = new Set();
+  let attempts = 0;
   for (const candidate of candidates) {
+    if (seen.has(candidate.href) || attempts >= ICON_MAX_CANDIDATE_ATTEMPTS) {
+      continue;
+    }
+    seen.add(candidate.href);
+    attempts += 1;
     try {
       if (/^data:/i.test(candidate.href)) {
         const dataUrl = normalizeInlineIconDataUrl(candidate.href);
@@ -1740,6 +1832,32 @@ async function resolvePageIconAsDataUrl(html, baseUrl) {
     }
   }
   return "";
+}
+
+// Icons listed in a web app manifest (largest first, monochrome masks skipped).
+async function readManifestIconCandidates(manifestHref, baseUrl) {
+  try {
+    const manifestUrl = new URL(manifestHref, baseUrl).toString();
+    await assertPublicHttpUrl(manifestUrl);
+    const response = await fetch(manifestUrl, {
+      headers: { ...BROWSER_FETCH_HEADERS, Accept: "application/manifest+json, application/json" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!response.ok) {
+      return [];
+    }
+    const manifest = JSON.parse(await readResponseTextWithLimit(response, 128 * 1024));
+    return (Array.isArray(manifest?.icons) ? manifest.icons : [])
+      .filter((icon) => typeof icon?.src === "string" && !/monochrome/i.test(String(icon.purpose || "")))
+      .map((icon) => {
+        const size = Math.max(0, ...String(icon.sizes || "").split(/\s+/).map((item) => Number.parseInt(item, 10)).filter(Number.isFinite));
+        return { href: new URL(icon.src, manifestUrl).toString(), score: Math.min(size || 64, 512) };
+      })
+      .sort((a, b) => b.score - a.score);
+  } catch {
+    return [];
+  }
 }
 
 async function assertPublicHttpUrl(value) {
@@ -1874,7 +1992,22 @@ function normalizeInlineIconDataUrl(href) {
   return sanitizeDataUrl(`data:${mimeType};base64,${Buffer.from(payload, "utf8").toString("base64")}`);
 }
 
+// One-time cleanup: earlier versions shared unavatar's generic logo as if it were a site's icon.
+function purgePlaceholderIconCache() {
+  const rows = db.prepare("SELECT host, data_url FROM app_icon_cache").all();
+  const placeholderHosts = rows.filter((row) => isPlaceholderIconDataUrl(row.data_url)).map((row) => row.host);
+  if (!placeholderHosts.length) {
+    return;
+  }
+  const remove = db.prepare("DELETE FROM app_icon_cache WHERE host = ?");
+  db.transaction((hosts) => hosts.forEach((host) => remove.run(host)))(placeholderHosts);
+  console.log(`Removed ${placeholderHosts.length} placeholder icon(s) from the shared icon cache`);
+}
+
 function storeDefaultIconCache(host, dataUrl) {
+  if (isPlaceholderIconDataUrl(dataUrl)) {
+    return;
+  }
   db.prepare(
     `
       INSERT INTO app_icon_cache (host, data_url, updated_at)

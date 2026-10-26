@@ -71,9 +71,9 @@ function buildIconSources(url) {
   const duck = `https://icons.duckduckgo.com/ip3/${host}.ico`;
   const s2 = `https://www.google.com/s2/favicons?sz=128&domain=${encodeURIComponent(host)}`;
   const s2DomainUrl = `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(url.href)}`;
-  const iconHorse = `https://icon.horse/icon/${encodeURIComponent(host)}`;
-  const unavatar = `https://unavatar.io/${encodeURIComponent(host)}`;
-  const allSources = [pathNative, pathNativePng, s2DomainUrl, native, nativePng, duck, s2, iconHorse, unavatar]
+  // icon.horse / unavatar.io are deliberately absent: for unknown sites they return a generic
+  // 200 placeholder that looks like a success. Server-side discovery covers what this chain misses.
+  const allSources = [pathNative, pathNativePng, s2DomainUrl, native, nativePng, duck, s2]
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index);
   const cooledSources = allSources.filter((item) => !isIconSourceCoolingDown(item));
@@ -675,7 +675,7 @@ function isProbablyValidIconDataUrl(value) {
 
   const trimmed = value.trim();
   if (!trimmed.startsWith("data:image/")) {
-    return true;
+    return !PLACEHOLDER_ICON_SOURCE_PATTERN.test(trimmed);
   }
 
   const commaIndex = trimmed.indexOf(",");
@@ -684,9 +684,13 @@ function isProbablyValidIconDataUrl(value) {
   }
 
   try {
-    const preview = window.atob(trimmed.slice(commaIndex + 1).slice(0, 128));
+    const preview = window.atob(trimmed.slice(commaIndex + 1).slice(0, 2048).replace(/=+$/, "").slice(0, 2044));
     const normalized = preview.trimStart().toLowerCase();
     if (normalized.startsWith("<!doctype html") || normalized.startsWith("<html")) {
+      return false;
+    }
+    // unavatar.io's logo, which earlier versions cached as if it were the site's icon.
+    if (normalized.includes("<title>unavatar</title>")) {
       return false;
     }
     return true;

@@ -139,7 +139,9 @@ const ICON_CACHE_STORAGE_KEY = "mx_icon_source_cache_v1";
 const ICON_CACHE_MAX_ENTRIES = 300;
 const ICON_CACHE_SERVER_PROMOTE_DEBOUNCE_MS = 1200;
 const ICON_SOURCE_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
-const ICON_DISCOVER_STORAGE_KEY = "mx_icon_discover_v1";
+// v2: retry hosts whose earlier lookups failed before discovery learned manifest/root-path icons.
+const ICON_DISCOVER_STORAGE_KEY = "mx_icon_discover_v2";
+const PLACEHOLDER_ICON_SOURCE_PATTERN = /^https?:\/\/(?:[^/]+\.)?(?:unavatar\.io|icon\.horse)\//i;
 const ICON_DISCOVER_RETRY_MS = 7 * 24 * 60 * 60 * 1000;
 // Runs after the icon promote round, which already turns working icons into cached data URLs.
 const ICON_DISCOVER_DELAY_MS = 8000;
