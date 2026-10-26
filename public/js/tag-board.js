@@ -249,7 +249,8 @@ function getTagSearchTerms(label) {
 }
 
 function fitTagLabelText() {
-  const labels = tagBoard.querySelectorAll(".tile-label");
+  // Tile labels and category names both start at their proportional size and shrink only if needed.
+  const labels = tagBoard.querySelectorAll(".tile-label, .category-name");
   labels.forEach((labelNode) => {
     if (!(labelNode instanceof HTMLElement)) {
       return;

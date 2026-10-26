@@ -129,6 +129,8 @@ function startTagPointerDrag() {
   ghost.style.pointerEvents = "";
   ghost.style.width = `${rect.width}px`;
   ghost.style.height = `${rect.height}px`;
+  // Outside .category-row the proportional geometry needs the tile size explicitly.
+  ghost.style.setProperty("--tile-size", `${rect.width}px`);
   // Position via `translate` (applied before `scale`) so the lift scale never shifts the ghost off the pointer.
   ghost.style.transform = "none";
   ghost.style.translate = `${rect.left}px ${rect.top}px`;
@@ -322,6 +324,7 @@ function shrinkOutTagCardCopy(card, rect) {
   copy.setAttribute("aria-hidden", "true");
   copy.style.width = `${rect.width}px`;
   copy.style.height = `${rect.height}px`;
+  copy.style.setProperty("--tile-size", `${rect.width}px`);
   copy.style.left = `${rect.left}px`;
   copy.style.top = `${rect.top}px`;
   document.body.appendChild(copy);

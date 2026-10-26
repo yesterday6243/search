@@ -685,12 +685,17 @@ button {
   cursor: grabbing;
 }
 
+/* One knob: every shape on the tag board is a fixed ratio of --tile-size, measured from the
+   full-size desktop layout (92px tiles). Breakpoints only change --tile-size (and the column
+   count on phones), so each layout is an exact scaled copy of the largest one. */
 .category-row {
   --tile-size: 92px;
-  --tile-gap: 12px;
+  --tile-gap: calc(var(--tile-size) * 0.1304); /* 12px @92 */
+  --side: calc(var(--tile-size) * 0.935); /* 86px @92 */
+  --side-gap: calc(var(--tile-size) * 0.174); /* 16px @92 */
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr) 86px;
-  column-gap: 16px;
+  grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
+  column-gap: var(--side-gap);
   align-items: start;
   width: 100%;
   max-width: 1296px;
@@ -729,14 +734,15 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 72px;
-  height: 72px;
-  padding: 8px;
-  border-radius: 20px;
+  width: calc(var(--tile-size) * 0.7826); /* 72px @92 */
+  height: calc(var(--tile-size) * 0.7826);
+  padding: calc(var(--tile-size) * 0.087); /* 8px @92 */
+  border-radius: calc(var(--tile-size) * 0.2174); /* 20px @92 */
   background: rgba(255, 255, 255, 0.24);
   border: 1px solid rgba(255, 255, 255, 0.42);
   color: rgba(255, 255, 255, 0.96);
-  font-size: 22px;
+  font-size: max(10px, calc(var(--tile-size) * 0.239)); /* 22px @92; shrunk to fit by JS */
+  line-height: 1.15;
   font-weight: 700;
   backdrop-filter: blur(16px);
   white-space: nowrap;
@@ -790,9 +796,9 @@ button {
 }
 
 .category-expand-btn {
-  width: 72px;
-  height: 72px;
-  border-radius: 20px;
+  width: calc(var(--tile-size) * 0.7826);
+  height: calc(var(--tile-size) * 0.7826);
+  border-radius: calc(var(--tile-size) * 0.2174);
 }
 
 .category-expand-btn {
@@ -842,8 +848,8 @@ button {
 
 .category-expand-icon {
   position: relative;
-  width: 24px;
-  height: 24px;
+  width: calc(var(--tile-size) * 0.261); /* 24px @92 */
+  height: calc(var(--tile-size) * 0.261);
   display: block;
 }
 
@@ -853,8 +859,8 @@ button {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 18px;
-  height: 2.5px;
+  width: calc(var(--tile-size) * 0.196); /* 18px @92 */
+  height: max(1.5px, calc(var(--tile-size) * 0.0272)); /* 2.5px @92 */
   border-radius: 999px;
   background: currentColor;
   transform: translate(-50%, -50%);
@@ -876,12 +882,12 @@ button {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  width: 92px;
-  min-height: 92px;
+  gap: calc(var(--tile-size) * 0.1087); /* 10px @92 */
+  width: var(--tile-size);
+  min-height: var(--tile-size);
   aspect-ratio: 1 / 1;
-  padding: 12px 8px;
-  border-radius: var(--radius-card);
+  padding: calc(var(--tile-size) * 0.1304) calc(var(--tile-size) * 0.087); /* 12px 8px @92 */
+  border-radius: calc(var(--tile-size) * 0.2826); /* 26px @92 */
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, var(--tag-surface-opacity)),
@@ -969,9 +975,9 @@ body.is-tag-dragging {
 .tile-icon {
   position: relative;
   z-index: 1;
-  width: 34px;
-  height: 34px;
-  border-radius: 14px;
+  width: calc(var(--tile-size) * 0.3696); /* 34px @92 */
+  height: calc(var(--tile-size) * 0.3696);
+  border-radius: calc(var(--tile-size) * 0.1522); /* 14px @92 */
   transform: translateZ(0);
   transition: border-radius 220ms ease;
 }
@@ -982,14 +988,16 @@ body.is-tag-dragging {
 
 .tag-card:hover .tile-icon,
 .tag-card:hover .tile-icon img {
-  border-radius: 2px;
+  border-radius: calc(var(--tile-size) * 0.0217); /* 2px @92 */
 }
 
 .tile-label {
   position: relative;
   z-index: 1;
+  display: block;
   max-width: 100%;
-  font-size: 15px;
+  font-size: max(10px, calc(var(--tile-size) * 0.163)); /* 15px @92; shrunk to fit by JS */
+  line-height: 1.2;
   font-weight: 700;
   color: #252d3c;
   white-space: nowrap;
@@ -2248,7 +2256,7 @@ body.is-tag-dragging {
   height: var(--tile-size, 92px);
   padding: 0;
   border: 1.5px dashed rgba(255, 255, 255, 0.6);
-  border-radius: var(--radius-card);
+  border-radius: calc(var(--tile-size, 92px) * 0.2826);
   color: rgba(255, 255, 255, 0.92);
   background: rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(14px);
@@ -2277,18 +2285,6 @@ body.is-tag-dragging {
 .tag-add-card:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.9);
   outline-offset: 3px;
-}
-
-@media (min-width: 900px) and (max-width: 1320px) {
-  .tag-add-card {
-    border-radius: 22px;
-  }
-}
-
-@media (max-width: 899px) {
-  .tag-add-card {
-    border-radius: clamp(16px, calc(var(--tile-size) * 0.24), 22px);
-  }
 }
 
 /* Tags fade out as they scroll up under the docked search bar.
@@ -2330,7 +2326,7 @@ body.is-tag-dragging {
 
   .tag-card:hover .tile-icon,
   .tag-card:hover .tile-icon img {
-    border-radius: 14px;
+    border-radius: calc(var(--tile-size) * 0.1522);
   }
 }
 
@@ -2360,42 +2356,7 @@ body.is-tag-dragging {
 
   .category-row {
     --tile-size: 84px;
-    --tile-gap: 10px;
-    grid-template-columns: 72px minmax(0, 1fr) 72px;
-    column-gap: 12px;
     max-width: none;
-  }
-
-  .category-name,
-  .category-expand-btn {
-    width: 64px;
-    height: 64px;
-    border-radius: 18px;
-  }
-
-  .category-name {
-    padding: 6px;
-    font-size: 15px;
-    line-height: 1.15;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  .tag-card {
-    width: var(--tile-size);
-    min-height: var(--tile-size);
-    padding: 10px 6px;
-    border-radius: 22px;
-    gap: 8px;
-  }
-
-  .tile-icon {
-    width: 32px;
-    height: 32px;
-  }
-
-  .tile-label {
-    font-size: 14px;
   }
 }
 
@@ -2557,19 +2518,23 @@ body.is-tag-dragging {
   }
 
   .category-row {
-    --side: 56px;
-    --side-gap: 10px;
+    /* The pill column and gaps are ratios of the tile here too, so the tile size is solved from the
+       screen width: width = cols·t + 2·side·t + 2·sideGap·t + (cols−1)·gap·t.
+       Side column is tightened to 0.8 (pill is 0.78) so phones fit 4 tiles; shapes keep their ratios. */
     --cols: 6;
-    --tile-gap: 10px;
+    --side-ratio: 0.8;
+    --side-gap-ratio: 0.1;
+    --gap-ratio: 0.1304;
     --tile-size: min(
       92px,
       calc(
-        (100vw - (var(--page-gutter) * 2) - ((var(--side) + var(--side-gap)) * 2) - ((var(--cols) - 1) * var(--tile-gap)))
-        / var(--cols)
+        (100vw - (var(--page-gutter) * 2))
+        / (var(--cols) + (2 * var(--side-ratio)) + (2 * var(--side-gap-ratio)) + ((var(--cols) - 1) * var(--gap-ratio)))
       )
     );
-    grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
-    column-gap: var(--side-gap);
+    --tile-gap: calc(var(--tile-size) * var(--gap-ratio));
+    --side: calc(var(--tile-size) * var(--side-ratio));
+    --side-gap: calc(var(--tile-size) * var(--side-gap-ratio));
     width: 100%;
     max-width: none;
   }
@@ -2579,21 +2544,6 @@ body.is-tag-dragging {
   .category-tail {
     min-height: var(--tile-size);
     transform: none;
-  }
-
-  .category-name,
-  .category-expand-btn {
-    width: var(--side);
-    height: var(--side);
-    border-radius: 16px;
-  }
-
-  .category-name {
-    padding: 4px;
-    font-size: 14px;
-    line-height: 1.15;
-    white-space: normal;
-    overflow-wrap: anywhere;
   }
 
   .category-mobile-title {
@@ -2609,21 +2559,6 @@ body.is-tag-dragging {
     justify-content: center;
   }
 
-  .tag-card {
-    width: var(--tile-size);
-    min-height: var(--tile-size);
-    aspect-ratio: 1 / 1;
-    padding: 8px 4px;
-    border-radius: clamp(16px, calc(var(--tile-size) * 0.24), 22px);
-    gap: 6px;
-  }
-
-  .tile-icon {
-    width: 30px;
-    height: 30px;
-    border-radius: 10px;
-  }
-
   .tile-icon img,
   .menu-engine-icon img,
   .history-engine-icon img,
@@ -2631,15 +2566,6 @@ body.is-tag-dragging {
     opacity: 1;
   }
 
-  .tile-label {
-    display: block;
-    max-width: 100%;
-    font-size: 12px;
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 }
 
 @media (max-width: 719px) {
@@ -2650,27 +2576,12 @@ body.is-tag-dragging {
 
 @media (max-width: 519px) {
   :root {
-    --page-gutter: 16px;
+    --page-gutter: 12px;
     --topbar-sticky-height: 60px;
   }
 
   .category-row {
-    --side: 46px;
-    --side-gap: 8px;
     --cols: 4;
-    --tile-gap: 8px;
-  }
-
-  .category-name,
-  .category-expand-btn {
-    border-radius: 14px;
-  }
-
-  .category-name {
-    padding: 2px;
-    font-size: 11px;
-    letter-spacing: 0;
-    white-space: nowrap;
   }
 
   /* Sync status collapses to its dot; the full text stays in the tooltip / aria-label. */
@@ -2701,7 +2612,7 @@ body.is-tag-dragging {
   }
 }
 
-@media (max-width: 439px) {
+@media (max-width: 349px) {
   .category-row {
     --cols: 3;
   }
@@ -2712,26 +2623,8 @@ body.is-tag-dragging {
     --page-gutter: 12px;
   }
 
-  .category-row {
-    --side: 40px;
-    --side-gap: 6px;
-  }
-
-  .category-name {
-    font-size: 10px;
-  }
-
   .brand-mini span {
     display: none;
-  }
-
-  .tile-icon {
-    width: 26px;
-    height: 26px;
-  }
-
-  .tile-label {
-    font-size: 11px;
   }
 }
 
