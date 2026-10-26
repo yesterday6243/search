@@ -688,7 +688,6 @@ button {
 .category-row {
   --tile-size: 92px;
   --tile-gap: 12px;
-  --category-hover-safe-top: 0px;
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr) 86px;
   column-gap: 16px;
@@ -720,12 +719,10 @@ button {
   cursor: grab;
   user-select: none;
   touch-action: none;
-  transform: translateY(var(--category-hover-safe-top));
 }
 
 .category-tail {
   align-self: start;
-  transform: translateY(var(--category-hover-safe-top));
 }
 
 .category-name {
@@ -746,17 +743,18 @@ button {
   text-align: center;
 }
 
+/* Every row reserves --lift-room above its tiles *inside* the clip box (padding) and cancels it with an
+   equal negative margin. Tiles therefore sit at the same place whether the row is collapsed or not, at
+   every breakpoint, and the hover lift is never cut off by a collapsed row's clipping. */
 .category-links {
+  --lift-room: 8px;
   display: flex;
   justify-content: center;
   width: 100%;
   overflow: visible;
-  padding: 0;
+  padding: var(--lift-room) 0 0;
+  margin-top: calc(-1 * var(--lift-room));
   max-height: none;
-}
-
-.category-row.has-overflow {
-  --category-hover-safe-top: 8px;
 }
 
 .category-row.has-overflow .category-links {
@@ -764,14 +762,15 @@ button {
      so the tags' scroll-driven fade still tracks the page scroll. */
   overflow: hidden;
   overflow: clip;
-  padding-top: 8px;
-  max-height: calc(var(--tile-size) + 8px);
+  max-height: calc(var(--tile-size) + var(--lift-room));
   transition: max-height 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .category-row.has-overflow.is-expanded .category-links {
   overflow: visible;
-  max-height: calc((var(--tile-size) * var(--category-rows)) + (var(--tile-gap) * (var(--category-rows) - 1)) + 8px);
+  max-height: calc(
+    (var(--tile-size) * var(--category-rows)) + (var(--tile-gap) * (var(--category-rows) - 1)) + var(--lift-room)
+  );
 }
 
 .tag-grid {
@@ -2569,7 +2568,6 @@ body.is-tag-dragging {
         / var(--cols)
       )
     );
-    --category-hover-safe-top: 0px;
     grid-template-columns: var(--side) minmax(0, 1fr) var(--side);
     column-gap: var(--side-gap);
     width: 100%;
@@ -2600,18 +2598,6 @@ body.is-tag-dragging {
 
   .category-mobile-title {
     display: none;
-  }
-
-  .category-row.has-overflow .category-links {
-    padding-top: 0;
-    max-height: var(--tile-size);
-  }
-
-  .category-row.has-overflow.is-expanded .category-links {
-    overflow: visible;
-    max-height: calc(
-      (var(--tile-size) * var(--category-rows)) + (var(--tile-gap) * (var(--category-rows) - 1))
-    );
   }
 
   .tag-grid {
