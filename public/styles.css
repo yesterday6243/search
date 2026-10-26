@@ -2259,8 +2259,10 @@ body.is-tag-dragging {
   border: 1.5px dashed rgba(255, 255, 255, 0.6);
   border-radius: calc(var(--tile-size, 92px) * 0.2826);
   color: rgba(255, 255, 255, 0.92);
+  /* Deliberately not frosted: the dashed, see-through look sets it apart from the glass expand button.
+     (A backdrop-filter here also flickered: it can't sample the background while the row's expand
+     clip animation runs, so it showed clear first and turned frosted afterwards.) */
   background: rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(14px);
   cursor: pointer;
   transition: background 180ms ease, border-color 180ms ease, scale 220ms var(--ease-spring);
 }
