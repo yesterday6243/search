@@ -52,7 +52,8 @@ function applyState(payload, options = {}) {
     void refreshBackgroundNow({ manual: false, force: previousBackgroundRefreshKey !== nextBackgroundRefreshKey });
   }
   scheduleBackgroundRotation();
-  renderTagBoard();
+  // Engine switches, settings tweaks etc. don't touch the board: skip rebuilding every card and icon.
+  renderTagBoardIfChanged();
   renderHistoryList(searchInput.value);
   renderSettingsHistoryList();
   renderEngineMenu();

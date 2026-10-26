@@ -88,12 +88,17 @@ button {
   transform: scale(1.04);
 }
 
+/* Blurred, tinted copy of the background, faded in by the "背景清晰度" setting. A plain `filter` on this
+   static layer is rasterised once; the previous full-screen `backdrop-filter` re-blurred the whole
+   viewport whenever anything changed, which was the single most expensive effect on the page. */
 .page-overlay {
   background:
     radial-gradient(circle at top left, rgba(255, 184, 102, 0.46), transparent 28%),
     radial-gradient(circle at top right, rgba(255, 136, 0, 0.35), transparent 32%),
-    linear-gradient(180deg, rgba(255, 252, 247, 0.26), rgba(242, 239, 234, 0.78));
-  backdrop-filter: blur(8px);
+    linear-gradient(180deg, rgba(255, 252, 247, 0.26), rgba(242, 239, 234, 0.78)),
+    var(--page-bg) center / cover no-repeat;
+  filter: blur(8px);
+  transform: scale(1.04);
   opacity: var(--bg-overlay-opacity);
 }
 
@@ -787,7 +792,6 @@ button {
   width: max-content;
   max-width: calc((var(--tile-size) * 10) + (var(--tile-gap) * 9));
   margin: 0 auto;
-  transform: translateZ(0);
   transition: opacity 220ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -835,45 +839,40 @@ button {
   pointer-events: none;
 }
 
-.category-expand-btn.is-disabled .category-expand-icon::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.category-expand-btn.is-disabled .category-expand-icon::after {
-  opacity: 0;
-  transform: translate(-50%, -50%) rotate(90deg) scaleY(0);
-}
-
+/* Expand / collapse: a chevron that points down when collapsed and turns up when expanded. */
 .category-expand-icon {
-  position: relative;
-  width: calc(var(--tile-size) * 0.261); /* 24px @92 */
-  height: calc(var(--tile-size) * 0.261);
   display: block;
+  width: calc(var(--tile-size) * 0.3); /* 27.6px @92 */
+  height: calc(var(--tile-size) * 0.3);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: rotate 320ms cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 
-.category-expand-icon::before,
-.category-expand-icon::after {
+.category-expand-btn.is-expanded .category-expand-icon {
+  rotate: 180deg;
+}
+
+/* Nothing to expand: a small dot instead of the chevron. */
+.category-expand-btn.is-disabled .category-expand-icon {
+  display: none;
+}
+
+.category-expand-btn.is-disabled::after {
   content: "";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: calc(var(--tile-size) * 0.196); /* 18px @92 */
-  height: max(1.5px, calc(var(--tile-size) * 0.0272)); /* 2.5px @92 */
-  border-radius: 999px;
+  width: calc(var(--tile-size) * 0.0652); /* 6px @92 */
+  height: calc(var(--tile-size) * 0.0652);
+  border-radius: 50%;
   background: currentColor;
-  transform: translate(-50%, -50%);
 }
 
-.category-expand-icon::after {
-  transition: opacity 180ms ease, transform 200ms ease;
-  transform: translate(-50%, -50%) rotate(90deg) scaleY(1);
-}
-
-.category-expand-btn.is-expanded .category-expand-icon::after {
-  opacity: 0;
-  transform: translate(-50%, -50%) rotate(90deg) scaleY(0);
+@media (prefers-reduced-motion: reduce) {
+  .category-expand-icon {
+    transition: none;
+  }
 }
 
 .tag-card {
@@ -898,7 +897,6 @@ button {
   color: var(--text-main);
   text-decoration: none;
   overflow: hidden;
-  transform: translateZ(0);
   transition: transform 220ms ease, box-shadow 220ms ease;
 }
 
@@ -978,7 +976,6 @@ body.is-tag-dragging {
   width: calc(var(--tile-size) * 0.3696); /* 34px @92 */
   height: calc(var(--tile-size) * 0.3696);
   border-radius: calc(var(--tile-size) * 0.1522); /* 14px @92 */
-  transform: translateZ(0);
   transition: border-radius 220ms ease;
 }
 
@@ -2634,8 +2631,9 @@ body.is-tag-dragging {
     background:
       radial-gradient(circle at top left, rgba(255, 184, 102, 0.34), transparent 24%),
       radial-gradient(circle at top right, rgba(255, 136, 0, 0.24), transparent 28%),
-      linear-gradient(180deg, rgba(255, 252, 247, 0.18), rgba(242, 239, 234, 0.68));
-    backdrop-filter: blur(5px);
+      linear-gradient(180deg, rgba(255, 252, 247, 0.18), rgba(242, 239, 234, 0.68)),
+      var(--page-bg) center / cover no-repeat;
+    filter: blur(5px);
   }
 
   .settings-title-row,

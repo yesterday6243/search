@@ -1,7 +1,20 @@
 // Homepage tag board: rendering, collapse/expand, label fitting, tag search, scroll fade fallback.
 // Classic script sharing the page's global scope; load order is defined in index.html.
 
+let lastTagBoardRenderKey = "";
+
+function renderTagBoardIfChanged() {
+  if (getTagBoardRenderKey() !== lastTagBoardRenderKey) {
+    renderTagBoard();
+  }
+}
+
+function getTagBoardRenderKey() {
+  return `${homeTagSearchQuery}|${JSON.stringify(appState?.categories || [])}`;
+}
+
 function renderTagBoard() {
+  lastTagBoardRenderKey = getTagBoardRenderKey();
   if (!appState.categories.length) {
     tagBoard.innerHTML = '<div class="empty-state">当前还没有标签分类，去右上角设置里添加即可。</div>';
     return;
@@ -63,7 +76,7 @@ function renderTagBoard() {
             aria-label="${isExpanded ? "收起分类标签" : "展开更多标签"}"
             title="${isExpanded ? "收起分类标签" : "展开更多标签"}"
           >
-            <span class="category-expand-icon" aria-hidden="true"></span>
+            <svg class="category-expand-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 9.5 12 15l5.5-5.5" /></svg>
           </button>
         `;
       const rowClassNames = [
@@ -248,27 +261,44 @@ function getTagSearchTerms(label) {
   return resolvedTerms;
 }
 
+// Batched: reset all, measure all in one layout pass, then write the fitted sizes. Text width scales
+// linearly with font size, so the fitted size is computed directly instead of shrinking 1px per reflow.
 function fitTagLabelText() {
-  // Tile labels and category names both start at their proportional size and shrink only if needed.
-  const labels = tagBoard.querySelectorAll(".tile-label, .category-name");
+  const minSize = 9;
+  const labels = Array.from(tagBoard.querySelectorAll(".tile-label, .category-name")).filter(
+    (node) => node instanceof HTMLElement
+  );
   labels.forEach((labelNode) => {
-    if (!(labelNode instanceof HTMLElement)) {
-      return;
-    }
-
     labelNode.style.fontSize = "";
     labelNode.style.lineHeight = "";
-
-    // Start from the breakpoint's CSS size so small screens never get bumped up.
-    const minSize = 9;
-    let currentSize = Math.round(Number.parseFloat(window.getComputedStyle(labelNode).fontSize) || 15);
-
-    while (currentSize > minSize && labelNode.scrollWidth > labelNode.clientWidth + 0.5) {
-      currentSize -= 1;
-      labelNode.style.fontSize = `${currentSize}px`;
-      labelNode.style.lineHeight = "1.2";
-    }
   });
+  const measurements = labels.map((labelNode) => ({
+    labelNode,
+    scrollWidth: labelNode.scrollWidth,
+    clientWidth: labelNode.clientWidth,
+    fontSize: Number.parseFloat(window.getComputedStyle(labelNode).fontSize) || 15,
+  }));
+  const shrink = (items) =>
+    items.forEach(({ labelNode, scrollWidth, clientWidth, fontSize }) => {
+      const fitted = Math.max(minSize, Math.floor(((fontSize * clientWidth) / scrollWidth) * 4) / 4 - 0.25);
+      labelNode.style.fontSize = `${fitted}px`;
+      labelNode.style.lineHeight = "1.2";
+    });
+  const overflowing = (items) =>
+    items.filter(({ scrollWidth, clientWidth }) => clientWidth && scrollWidth > clientWidth + 0.5);
+
+  const firstPass = overflowing(measurements);
+  shrink(firstPass);
+  // Glyph rounding can leave a few labels a hair too wide: one more batched pass fixes those.
+  const secondPass = overflowing(
+    firstPass.map(({ labelNode }) => ({
+      labelNode,
+      scrollWidth: labelNode.scrollWidth,
+      clientWidth: labelNode.clientWidth,
+      fontSize: Number.parseFloat(labelNode.style.fontSize) || minSize,
+    }))
+  ).filter(({ fontSize }) => fontSize > minSize);
+  shrink(secondPass);
 }
 
 function toggleCategoryExpanded(categoryId) {

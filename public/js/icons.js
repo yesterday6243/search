@@ -133,9 +133,11 @@ function buildIconMarkup(iconUrl, _fallback, className = "engine-button-icon") {
   const displaySource = cachedSource || fallbackSources[0] || "";
   const chainSources = cachedSource ? fallbackSources : fallbackSources.slice(1);
   const readyClass = cachedSource ? " is-ready" : "";
+  // Tile icons load lazily: icons in collapsed rows or far below the fold don't compete for the network.
+  const loading = className.includes("tile-icon") ? "lazy" : "eager";
   const imageMarkup = displaySource
-    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(displaySource)}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(chainSources.join("|"))}" data-icon-managed alt="" loading="eager" fetchpriority="low" decoding="async" />`
-    : `<img class="mx-icon-image is-ready" src="${DEFAULT_ICON_DATA_URL}" alt="" loading="eager" fetchpriority="low" decoding="async" />`;
+    ? `<img class="mx-icon-image${readyClass}" src="${escapeAttribute(displaySource)}" data-icon-host="${escapeAttribute(iconHost)}" data-icon-chain="${escapeAttribute(chainSources.join("|"))}" data-icon-managed alt="" loading="${loading}" fetchpriority="low" decoding="async" />`
+    : `<img class="mx-icon-image is-ready" src="${DEFAULT_ICON_DATA_URL}" alt="" loading="${loading}" fetchpriority="low" decoding="async" />`;
 
   return `
     <span class="${className}">
@@ -578,6 +580,12 @@ function needsIconDiscovery(host) {
 }
 
 let iconDiscoverKnownUrls = null;
+// Lazy tile icons that haven't started loading yet (collapsed rows, below the fold) aren't failures.
+function hasAttemptedIconLoad(host) {
+  const images = document.querySelectorAll(`img[data-icon-host="${CSS.escape(host)}"]`);
+  return !images.length || Array.from(images).some((image) => image.complete);
+}
+
 function scheduleIconDiscovery() {
   if (!authState.loggedIn || !appState) {
     return;
@@ -600,7 +608,7 @@ function scheduleIconDiscovery() {
     appState.categories.forEach((category) => {
       category.links.forEach((link) => {
         const host = getLinkIconHost(link.url);
-        if (host && needsIconDiscovery(host) && !(now - Number(log[host] || 0) < ICON_DISCOVER_RETRY_MS)) {
+        if (host && needsIconDiscovery(host) && !(now - Number(log[host] || 0) < ICON_DISCOVER_RETRY_MS) && hasAttemptedIconLoad(host)) {
           queueIconDiscovery(link.url);
         }
       });
