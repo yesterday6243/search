@@ -179,7 +179,7 @@ SQLite 数据库，当前包含：
 
 - 本地存储 `mx_sync_v2`：`base`（服务端确认的 doc）+ `rev` + `outbox`（正在发送的一批，带 `batchId`）+ `pending`（之后的改动）。页面显示的是 `base + outbox + pending`
 - `updateState()`（登录时）→ `commitLocalStateChange()`：用 diff 算出 op，放进 `pending`，1.5 秒后推送；推送回包里带着其他人的改动，一次往返完成合并
-- 拉取：页面变为可见 / 获得焦点 / 恢复联网时，以及可见状态下每 60 秒一次，`GET /api/sync?since=rev`；没有改动时回包约 50 字节。后台标签页不轮询
+- 拉取（`GET /api/sync?since=rev`，没有改动时回包约 50 字节）：页面变为可见 / 获得焦点 / 恢复联网时；用户点击或按键时如果距上次同步超过 30 秒；页面可见但一直没人操作时每 10 分钟兜底一次。不操作就几乎没有请求，后台标签页不轮询。推送的回包本身就带着别人的改动，也算一次同步
 - 页面隐藏 / 关闭：把 `pending` 转成 `outbox` 并用 `keepalive` 发出；`batchId` 幂等，之后重发不会重复应用
 - 多标签页：同步存储放在 localStorage，其他标签页通过 `storage` 事件直接重绘；推送 / 拉取用 `navigator.locks` 串行，避免两个标签页同时发同一批
 - 设置抽屉：打开时记下当时的 doc（`settingsDraftBaseDoc`），保存时只对比草稿和这份 doc，所以只提交在抽屉里改过的字段，期间别处的改动不会被旧草稿覆盖

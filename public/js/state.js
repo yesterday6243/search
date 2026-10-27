@@ -294,7 +294,10 @@ let syncAutoHistoryOpen = false;
 const SYNC_STORE_KEY = "mx_sync_v2";
 const SYNC_PUSH_DELAY_MS = 1500;
 const SYNC_RETRY_MS = 15 * 1000;
-const SYNC_POLL_INTERVAL_MS = 60 * 1000;
+// Pull when the page is shown / focused, when the user starts interacting (if the last sync is older
+// than 30s), and as a safety net every 10 min for a visible page nobody touches. Idle = no requests.
+const SYNC_POLL_INTERVAL_MS = 10 * 60 * 1000;
+const SYNC_ACTIVITY_PULL_GAP_MS = 30 * 1000;
 const SYNC_PULL_MIN_GAP_MS = 3000;
 let syncViewDoc = null; // the doc this tab is showing (base + unsent ops)
 let lastRenderedSyncKey = "";

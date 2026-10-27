@@ -7,8 +7,9 @@
 //   outbox  = { id, ops } batch being sent; kept until acknowledged, retries reuse the id (idempotent)
 //   pending = ops made locally since then
 // What a tab shows = base + outbox + pending. Pushes carry only the changed fields and go out 1.5s
-// after the last change; pulls ask "anything after rev?" when the page is shown / focused and once a
-// minute while visible (an idle answer is ~50 bytes). Other tabs follow via the `storage` event.
+// after the last change; pulls ask "anything after rev?" when the page is shown / focused, when the user
+// starts interacting after 30s+ without a sync, and every 10 min as a safety net while visible (an idle
+// answer is ~50 bytes). Other tabs follow via the `storage` event.
 
 function loadSyncStore() {
   if (!authState.loggedIn || !authState.username) {
@@ -196,6 +197,7 @@ async function pushSync() {
       mergeSyncPayload(store, payload);
       saveSyncStore(store);
       syncPhase = "idle";
+      lastSyncPullAt = Date.now(); // the reply already carried everyone else's changes
       renderSyncView(store, { remote: true });
       if (store.pending.length) {
         scheduleSyncPush();
@@ -328,11 +330,19 @@ function bindSyncEvents() {
   window.addEventListener("pagehide", flushSyncOnHide);
   window.addEventListener("focus", () => void syncNow());
   window.addEventListener("online", () => void syncNow({ force: true }));
-  window.setInterval(() => {
-    if (document.visibilityState === "visible") {
+  // Coming back to an idle page: catch up on the first click / key press instead of polling meanwhile.
+  const syncOnActivity = () => {
+    if (Date.now() - lastSyncPullAt > SYNC_ACTIVITY_PULL_GAP_MS) {
       void syncNow();
     }
-  }, SYNC_POLL_INTERVAL_MS);
+  };
+  document.addEventListener("pointerdown", syncOnActivity, { capture: true, passive: true });
+  document.addEventListener("keydown", syncOnActivity, true);
+  window.setInterval(() => {
+    if (document.visibilityState === "visible" && Date.now() - lastSyncPullAt >= SYNC_POLL_INTERVAL_MS) {
+      void syncNow();
+    }
+  }, 60 * 1000);
 }
 
 // The pre-sync version kept a "dirty" flag per user; read it once to migrate unsynced local edits.
