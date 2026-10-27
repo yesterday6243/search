@@ -1443,6 +1443,10 @@
   background: color-mix(in srgb, var(--theme-accent) 4%, white);
 }
 
+.sync-modal[data-color-theme] .sync-backup-item.is-settled {
+  animation: none;
+}
+
 @keyframes backup-item-in {
   from {
     opacity: 0;

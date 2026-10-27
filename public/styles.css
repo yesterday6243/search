@@ -2038,13 +2038,7 @@ body.is-tag-dragging {
     translate 260ms var(--ease-out-soft);
 }
 
-@media (hover: hover) {
-  .engine-button:hover {
-    translate: 0 -2px;
-    box-shadow: 0 16px 32px rgba(30, 34, 48, 0.14);
-  }
-}
-
+/* No hover lift on the engine button; only the press feedback below. */
 .engine-button:active {
   scale: 0.93;
   translate: 0 0;

@@ -10,6 +10,19 @@
 
 ## Recent Records
 
+### 2026-10-27 - 备份页每次操作都像整页刷新；搜索引擎按钮悬停上浮
+- 现象：
+  - 备份页里立即备份、恢复、重命名、删除、展开快照等任何操作后，整个列表重新淡入，看起来像整页刷新。
+  - 鼠标放到搜索引擎按钮上会上浮。
+- 根因：
+  - `renderBackupList()` 每次都用 `innerHTML` 重建整个列表，每一行的入场动画（逐行错开的淡入上移）都会重新播放；内容没变也会重建。
+  - `.engine-button:hover` 有 `translate: 0 -2px` 和加深的阴影。
+- 处理方案：
+  - 列表渲染改走 `setBackupListHtml()`：内容相同直接跳过；需要重建时，之前已显示过的行（按 `data-backup-key` 识别）加 `is-settled` 关闭入场动画，只有新出现的行播放动画。
+  - 去掉引擎按钮的悬停上浮和阴影，保留按下时的缩放反馈。
+- 涉及文件：
+  - `public/js/backup.js`、`public/js/state.js`、`public/settings-themes.css`、`public/styles.css`
+
 ### 2026-10-27 - 同步轮询从每 60 秒改为按使用情况
 - 现象：
   - 页面开着不操作也每 60 秒请求一次服务器，没有必要。

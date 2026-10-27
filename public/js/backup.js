@@ -179,7 +179,7 @@ function renderBackupTime(createdAt) {
 function renderAutoBackupRow(backup, { isHistory = false } = {}) {
   const backupId = escapeAttribute(backup.id || "");
   return `
-    <article class="sync-backup-item is-auto${isHistory ? " is-auto-history" : ""}">
+    <article class="sync-backup-item is-auto${isHistory ? " is-auto-history" : ""}" data-backup-key="${backupId}">
       <span class="sync-backup-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M12 4a8 8 0 0 1 7.75 6H22l-3.5 4-3.5-4h2.67A6 6 0 1 0 12 18a5.96 5.96 0 0 0 4.24-1.76l1.42 1.42A8 8 0 1 1 12 4Zm-1 4h2v4.59l3.2 3.2-1.4 1.42L11 13.41V8Z" /></svg>
       </span>
@@ -237,6 +237,22 @@ function applyBackupLimit(payload) {
   }
 }
 
+// Rebuilding the list replays every row's fade-in, which made each action (backup, rename, expand…)
+// look like the whole page reloading. Skip identical renders, and only animate rows that are new.
+function setBackupListHtml(html) {
+  if (html === lastBackupListHtml) {
+    return;
+  }
+  const shown = new Set(Array.from(syncBackupList.querySelectorAll("[data-backup-key]"), (node) => node.dataset.backupKey));
+  syncBackupList.innerHTML = html;
+  lastBackupListHtml = html;
+  syncBackupList.querySelectorAll("[data-backup-key]").forEach((node) => {
+    if (shown.has(node.dataset.backupKey)) {
+      node.classList.add("is-settled");
+    }
+  });
+}
+
 function renderBackupList() {
   if (!syncBackupList) {
     return;
@@ -247,13 +263,13 @@ function renderBackupList() {
   renderSyncModalStatus();
 
   if (!syncModalLoaded && authState.loggedIn) {
-    syncBackupList.innerHTML = Array.from({ length: 3 }, () => '<div class="sync-backup-skeleton" aria-hidden="true"><span></span><span></span></div>').join("");
+    setBackupListHtml(Array.from({ length: 3 }, () => '<div class="sync-backup-skeleton" aria-hidden="true"><span></span><span></span></div>').join(""));
     return;
   }
 
   const autoRow = renderAutoBackupSection();
   if (!syncModalBackups.length) {
-    syncBackupList.innerHTML = autoRow + `
+    setBackupListHtml(autoRow + `
       <div class="sync-backup-empty">
         <span class="sync-backup-empty-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M6.5 19a4.5 4.5 0 0 1-.67-8.95A6 6 0 0 1 17.5 8.6 4.25 4.25 0 0 1 17.25 19H6.5Z" /></svg>
@@ -261,11 +277,11 @@ function renderBackupList() {
         <strong>还没有云端备份</strong>
         <span>点击上方「立即备份」，把当前首页配置保存到云端。</span>
       </div>
-    `;
+    `);
     return;
   }
 
-  syncBackupList.innerHTML = autoRow + syncModalBackups
+  setBackupListHtml(autoRow + syncModalBackups
     .map((backup, index) => {
       const backupId = escapeAttribute(backup.id || "");
       const createdAt = backup.createdAt || "";
@@ -278,7 +294,7 @@ function renderBackupList() {
         summary.bytes ? formatByteSize(summary.bytes) : "",
       ].filter(Boolean);
       return `
-        <article class="sync-backup-item" style="--item-index:${index}">
+        <article class="sync-backup-item" style="--item-index:${index}" data-backup-key="${backupId}">
           <span class="sync-backup-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path d="M4 5h16v4H4V5Zm1 5h14v9H5v-9Zm4 2v2h6v-2H9Z" /></svg>
           </span>
@@ -304,7 +320,7 @@ function renderBackupList() {
         </article>
       `;
     })
-    .join("");
+    .join(""));
 }
 
 async function handleBackupNow() {

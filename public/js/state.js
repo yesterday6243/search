@@ -290,6 +290,7 @@ let syncModalBackupLimit = 10;
 let syncModalAutoBackup = null;
 let syncModalAutoBackups = [];
 let syncAutoHistoryOpen = false;
+let lastBackupListHtml = "";
 // Field-level sync (sync.js). Pushes are tiny, so they go out shortly after the last change.
 const SYNC_STORE_KEY = "mx_sync_v2";
 const SYNC_PUSH_DELAY_MS = 1500;
