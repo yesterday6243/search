@@ -290,15 +290,20 @@ let syncModalBackupLimit = 10;
 let syncModalAutoBackup = null;
 let syncModalAutoBackups = [];
 let syncAutoHistoryOpen = false;
-// Cross-tab sync: a newer snapshot from another tab that arrived mid-drag waits here.
-let pendingExternalStatePayload = null;
-let settingsDraftStale = false;
-// Auto backup: each local change restarts a 30s timer; when it fires, everything is saved at once.
-const AUTO_BACKUP_DELAY_MS = 30 * 1000;
-const AUTO_BACKUP_RETRY_MS = 60 * 1000;
-let autoBackupTimer = 0;
-let autoBackupInFlight = null;
-let localChangeVersion = 0;
+// Field-level sync (sync.js). Pushes are tiny, so they go out shortly after the last change.
+const SYNC_STORE_KEY = "mx_sync_v2";
+const SYNC_PUSH_DELAY_MS = 1500;
+const SYNC_RETRY_MS = 15 * 1000;
+const SYNC_POLL_INTERVAL_MS = 60 * 1000;
+const SYNC_PULL_MIN_GAP_MS = 3000;
+let syncViewDoc = null; // the doc this tab is showing (base + unsent ops)
+let lastRenderedSyncKey = "";
+let syncPushTimer = 0;
+let syncPhase = "idle"; // idle | pushing | offline
+let lastSyncPullAt = 0;
+// Doc the open settings draft was cloned from: saving diffs the draft against it, so only what was
+// edited in the drawer is sent and changes made meanwhile elsewhere are kept.
+let settingsDraftBaseDoc = null;
 let syncModalLoaded = false;
 let settingsTrailFrame = 0;
 let settingsQuickScrollFrame = 0;

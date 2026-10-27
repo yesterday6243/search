@@ -10,6 +10,27 @@
 
 ## Recent Records
 
+### 2026-10-27 - 改为字段级同步：多人 / 多窗口同时修改不再互相覆盖
+- 现象：
+  - 上一版用「跨标签页同步 + 自动备份历史」缓解了多窗口覆盖，但本质仍是整份上传、后写覆盖：两台设备同时改，晚到的一份会把早到的改动整份盖掉；每次自动备份都存完整一份，数据量大。
+- 根因：
+  - 同步单位是整份状态，没有「改了什么」的信息，服务端只能整份替换。
+- 处理方案：
+  - 新增 `public/js/sync-core.js`（前后端共用）：数据按 id 拆成分类 / 标签 / 引擎对象和独立的设置路径；位置用分数排序键，移动只改被移动的一项；删除留墓碑。
+  - 客户端把每次改动 diff 成字段级 op（例如改名只发 `{c:"links", id, set:{label}}`，约 100 字节），1.5 秒后推送；服务端逐条校验、按字段后写覆盖、递增 `rev` 并记日志；客户端带 `since` 增量拉取，空闲时回包约 50 字节；只在页面可见时每 60 秒轮询一次。
+  - `batchId` 幂等，页面关闭时用 keepalive 发出未发送的改动；多标签页共用本地同步存储，用 `navigator.locks` 串行推送 / 拉取。
+  - 设置抽屉保存时只对比打开时的版本，只提交抽屉里改过的字段。
+  - 自动备份改为服务端「自动快照」：最多每小时一份改动前的状态，保留 10 份，与手动备份（10 条）分开计数，互不挤占；恢复改为服务端 reset 批次，所有设备自动跟上，恢复前强制留快照。
+  - 从旧版本升级：服务端用旧状态 / 最新备份中最新的一份初始化；客户端旧的未备份改动以 op 形式补发一次。
+  - 移除 `PUT /api/backups/auto` 和 `PUT /api/state`；新增 `npm test`。
+- 涉及文件：
+  - `public/js/sync-core.js`、`public/js/sync.js`（新增）
+  - `server.js`
+  - `public/js/store.js`、`public/js/backup.js`、`public/js/auth.js`、`public/js/main.js`、`public/js/settings.js`、`public/js/state.js`
+  - `public/index.html`
+  - `tests/sync-core.test.js`、`package.json`
+  - `docs/API.md`、`docs/DEVELOPER_GUIDE.md`、`README.md`
+
 ### 2026-10-27 - 两个窗口同时打开，改动被「变回原来的」，自动备份只有一条
 - 现象：
   - 同一账号开两个窗口，在一个窗口修改、自动备份后，数据又变回修改前；服务器上自动备份记录始终只有一条。

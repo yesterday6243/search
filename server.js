@@ -3,14 +3,22 @@ const fs = require("fs");
 const express = require("express");
 const path = require("path");
 const Database = require("better-sqlite3");
+const SyncCore = require("./public/js/sync-core.js");
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = (typeof process.env.HOST === "string" && process.env.HOST.trim()) || "0.0.0.0";
 const HISTORY_LIMIT = 100;
 const USER_LIMIT = 50;
 const USER_BACKUP_LIMIT = 10;
-// Auto backups keep a rolling history, so one stale window/device can't silently replace the only copy.
-const AUTO_BACKUP_HISTORY_LIMIT = 20;
+// Auto snapshots: taken by the server at most once per interval, right before a change lands, so they
+// are restore points (not a sync mechanism). Separate from, and never evicting, manual backups.
+const AUTO_BACKUP_HISTORY_LIMIT = 10;
+const AUTO_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000;
+// Field-level sync (see public/js/sync-core.js and docs/DEVELOPER_GUIDE.md).
+const SYNC_LOG_KEEP = 500;
+const SYNC_MAX_BATCHES_PER_RESPONSE = 200;
+const SYNC_MAX_OPS_PER_BATCH = 5000;
+const SYNC_TOMB_LIMIT = 5000;
 const PASSWORD_MIN_LENGTH = 8;
 const SESSION_COOKIE_NAME = "mx_search_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -235,14 +243,30 @@ app.get("/api/background/bing", async (req, res) => {
   }
 });
 
+// Read-only view of the synced state as plain arrays (writes go through /api/sync).
 app.get("/api/state", requireAuth, (req, res) => {
-  res.json(getStateRecord(req.authUser.id));
+  const record = getSyncRecord(req.authUser.id);
+  res.json({ state: getSyncPlainState(record.doc), updatedAt: record.updatedAt });
 });
 
-app.put("/api/state", requireAuth, (req, res) => {
-  const patch = req.body && typeof req.body === "object" ? req.body : {};
-  const nextRecord = mutateState(req.authUser.id, (current) => mergeState(current, patch));
-  res.json(nextRecord);
+// Pull: `since` = the revision the client already has. Returns nothing new ({ rev }), the missing
+// op batches, or the full doc when the client is too far behind (or sends no `since`).
+app.get("/api/sync", requireAuth, (req, res) => {
+  const since = req.query.since === undefined ? null : Number(req.query.since);
+  res.json(buildSyncResponse(req.authUser.id, Number.isInteger(since) ? since : null));
+});
+
+// Push: one batch of field-level ops. batchId makes retries idempotent.
+app.post("/api/sync", requireAuth, (req, res) => {
+  const batchId = typeof req.body?.batchId === "string" ? req.body.batchId : "";
+  const ops = Array.isArray(req.body?.ops) ? req.body.ops : null;
+  if (!/^[\w-]{8,64}$/.test(batchId) || !ops || ops.length > SYNC_MAX_OPS_PER_BATCH) {
+    res.status(400).json({ message: "invalid sync batch" });
+    return;
+  }
+  const since = Number(req.body?.since);
+  const record = applySyncBatch(req.authUser.id, batchId, ops);
+  res.json({ ack: batchId, ...buildSyncResponse(req.authUser.id, Number.isInteger(since) ? since : null, record) });
 });
 
 app.get("/api/backups", requireAuth, (req, res) => {
@@ -251,14 +275,15 @@ app.get("/api/backups", requireAuth, (req, res) => {
   });
 });
 
-// Auto backup: the client calls this ~30s after the last local change (debounced).
-app.put("/api/backups/auto", requireAuth, (req, res) => {
-  const inputState = req.body?.state;
-  if (!inputState || typeof inputState !== "object" || Array.isArray(inputState)) {
-    res.status(400).json({ message: "state is required" });
+// Restore = a server-side "reset" batch, so every device picks it up through normal sync.
+app.post("/api/backups/:backupId/restore", requireAuth, (req, res) => {
+  const backup = getUserBackupRecord(req.authUser.id, req.params.backupId);
+  if (!backup) {
+    res.status(404).json({ message: "备份不存在" });
     return;
   }
-  res.json({ ok: true, autoBackup: saveAutoBackup(req.authUser.id, inputState) });
+  const record = restoreSyncFromState(req.authUser.id, backup.state);
+  res.json({ ok: true, rev: record.rev, updatedAt: record.updatedAt });
 });
 
 app.get("/api/backups/:backupId", requireAuth, (req, res) => {
@@ -520,8 +545,8 @@ function ensureDatabaseSchema() {
     db.prepare(`ALTER TABLE user_backups ADD COLUMN name TEXT NOT NULL DEFAULT ''`).run();
   } catch {}
 
-  // "manual" backups are user-created (kept up to USER_BACKUP_LIMIT); each user also has at most
-  // one "auto" backup that is overwritten after every change.
+  // "manual" backups are user-created (kept up to USER_BACKUP_LIMIT); "auto" ones are hourly
+  // server-side snapshots (kept up to AUTO_BACKUP_HISTORY_LIMIT). The two limits are independent.
   try {
     db.prepare(`ALTER TABLE user_backups ADD COLUMN kind TEXT NOT NULL DEFAULT 'manual'`).run();
   } catch {}
@@ -529,6 +554,40 @@ function ensureDatabaseSchema() {
   db.prepare(`
     CREATE INDEX IF NOT EXISTS idx_user_backups_user_created
     ON user_backups(user_id, created_at DESC)
+  `).run();
+
+  // Synced state per user: the normalized doc + a revision; every accepted op batch is logged so
+  // clients can catch up with just the batches they missed.
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS user_sync (
+      user_id INTEGER PRIMARY KEY,
+      doc TEXT NOT NULL,
+      rev INTEGER NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS user_sync_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      rev INTEGER NOT NULL,
+      batch_id TEXT NOT NULL,
+      ops TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `).run();
+
+  db.prepare(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sync_log_rev
+    ON user_sync_log(user_id, rev)
+  `).run();
+
+  db.prepare(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_sync_log_batch
+    ON user_sync_log(user_id, batch_id)
   `).run();
 
   db.prepare(`
@@ -1094,38 +1153,263 @@ function getAutoBackup(userId) {
   return listAutoBackups(userId)[0] || null;
 }
 
-// Each auto save is a new timestamped version (identical content only refreshes the latest version's
-// time); versions beyond AUTO_BACKUP_HISTORY_LIMIT are pruned oldest first.
-function saveAutoBackup(userId, inputState) {
-  const state = JSON.stringify(sanitizeState(inputState, defaultState));
-  const savedAt = new Date().toISOString();
-  db.transaction(() => {
-    const latest = db
-      .prepare(`SELECT id, data FROM user_backups WHERE user_id = ? AND kind = 'auto' ORDER BY created_at DESC, id DESC LIMIT 1`)
-      .get(userId);
-    if (latest && latest.data === state) {
-      db.prepare(`UPDATE user_backups SET created_at = ? WHERE id = ?`).run(savedAt, latest.id);
-    } else {
-      db.prepare(`INSERT INTO user_backups (user_id, name, data, created_at, kind) VALUES (?, ?, ?, ?, 'auto')`).run(
-        userId,
-        AUTO_BACKUP_NAME,
-        state,
-        savedAt
-      );
+// Called right before a sync batch lands: if the newest auto snapshot is older than the interval,
+// keep the state as it was before this change (skipped when identical to the newest snapshot).
+// `force` (restores) skips the interval so the replaced state can always be restored again.
+function maybeSnapshotBeforeChange(userId, record, { force = false } = {}) {
+  const latest = db
+    .prepare(`SELECT data, created_at FROM user_backups WHERE user_id = ? AND kind = 'auto' ORDER BY created_at DESC, id DESC LIMIT 1`)
+    .get(userId);
+  if (!force && latest && Date.now() - Date.parse(latest.created_at) < AUTO_SNAPSHOT_INTERVAL_MS) {
+    return;
+  }
+  const data = JSON.stringify(getSyncPlainState(record.doc));
+  if (latest && latest.data === data) {
+    return;
+  }
+  db.prepare(`INSERT INTO user_backups (user_id, name, data, created_at, kind) VALUES (?, ?, ?, ?, 'auto')`).run(
+    userId,
+    AUTO_BACKUP_NAME,
+    data,
+    new Date().toISOString()
+  );
+  db.prepare(
+    `
+      DELETE FROM user_backups
+      WHERE user_id = ? AND kind = 'auto' AND id NOT IN (
+        SELECT id FROM user_backups
+        WHERE user_id = ? AND kind = 'auto'
+        ORDER BY created_at DESC, id DESC
+        LIMIT ${AUTO_BACKUP_HISTORY_LIMIT}
+      )
+    `
+  ).run(userId, userId);
+}
+
+// ---------------- field-level sync ----------------
+const SYNC_SETTING_PATHS = new Set([
+  ...Object.keys(SyncCore.flattenSettings(defaultState.settings)),
+  "searchSuggestions",
+]);
+const SYNC_ENTITY_FIELDS = {
+  categories: {
+    name: (value) => sanitizeText(value, "").slice(0, 18) || undefined,
+    isPinned: (value) => Boolean(value),
+  },
+  links: {
+    label: (value) => sanitizeText(value, "").slice(0, 18) || undefined,
+    url: (value) => sanitizePublicUrl(value) || undefined,
+  },
+  engines: {
+    name: (value) => sanitizeText(value, "").slice(0, 24) || undefined,
+    urlTemplate: (value) => sanitizeTemplateUrl(value) || undefined,
+  },
+};
+const SYNC_REQUIRED_FIELDS = {
+  categories: ["name", "$k"],
+  links: ["label", "url", "$p", "$k"],
+  engines: ["name", "urlTemplate", "$k"],
+};
+const SYNC_OPTIONAL_FIELDS = { categories: ["isPinned"], links: [], engines: [] };
+
+function isValidSyncId(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 40 && !/[\u0000-\u001f]/.test(value);
+}
+
+function getSyncPlainState(doc) {
+  return sanitizeState(SyncCore.stateFromDoc(doc), defaultState);
+}
+
+// Newest of the legacy copies (auto / manual backup, old user_state) seeds the doc on first use.
+function pickInitialSyncState(userId) {
+  const legacy = getStateRecord(userId);
+  let best = { state: legacy.state, updatedAt: legacy.updatedAt };
+  const backup = db
+    .prepare(`SELECT data, created_at FROM user_backups WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+    .get(userId);
+  if (backup && Date.parse(backup.created_at) > Date.parse(best.updatedAt)) {
+    best = { state: sanitizeState(safelyParse(backup.data), defaultState), updatedAt: backup.created_at };
+  }
+  return best;
+}
+
+function getSyncRecord(userId) {
+  let row = db.prepare("SELECT doc, rev, updated_at FROM user_sync WHERE user_id = ?").get(userId);
+  if (!row) {
+    const initial = pickInitialSyncState(userId);
+    db.prepare("INSERT OR IGNORE INTO user_sync (user_id, doc, rev, updated_at) VALUES (?, ?, 0, ?)").run(
+      userId,
+      JSON.stringify(SyncCore.docFromState(initial.state)),
+      initial.updatedAt
+    );
+    row = db.prepare("SELECT doc, rev, updated_at FROM user_sync WHERE user_id = ?").get(userId);
+  }
+  let doc;
+  try {
+    doc = SyncCore.normalizeDoc(JSON.parse(row.doc));
+  } catch {
+    doc = SyncCore.docFromState(defaultState);
+  }
+  return { doc, rev: row.rev, updatedAt: row.updated_at };
+}
+
+function buildSyncResponse(userId, since, record = getSyncRecord(userId)) {
+  const base = { rev: record.rev, updatedAt: record.updatedAt };
+  if (since === record.rev) {
+    return base;
+  }
+  if (Number.isInteger(since) && since >= 0 && since < record.rev && record.rev - since <= SYNC_MAX_BATCHES_PER_RESPONSE) {
+    const rows = db
+      .prepare("SELECT rev, batch_id, ops FROM user_sync_log WHERE user_id = ? AND rev > ? ORDER BY rev")
+      .all(userId, since);
+    if (rows.length === record.rev - since) {
+      return { ...base, batches: rows.map((row) => ({ rev: row.rev, id: row.batch_id, ops: JSON.parse(row.ops) })) };
     }
-    db.prepare(
-      `
-        DELETE FROM user_backups
-        WHERE user_id = ? AND kind = 'auto' AND id NOT IN (
-          SELECT id FROM user_backups
-          WHERE user_id = ? AND kind = 'auto'
-          ORDER BY created_at DESC, id DESC
-          LIMIT ${AUTO_BACKUP_HISTORY_LIMIT}
-        )
-      `
-    ).run(userId, userId);
+  }
+  return { ...base, doc: record.doc };
+}
+
+// Validates one client op against the current doc and returns the op as it will be stored and
+// replayed by every client (sanitized values), or null to drop it.
+function sanitizeSyncOp(raw, doc) {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const set = raw.set && typeof raw.set === "object" && !Array.isArray(raw.set) ? raw.set : {};
+
+  if (raw.c === "settings") {
+    const paths = Object.keys(set).filter((path) => SYNC_SETTING_PATHS.has(path));
+    if (!paths.length) {
+      return null;
+    }
+    const current = sanitizeSettings(SyncCore.unflattenSettings(doc.settings), defaultState.settings);
+    const candidate = { ...SyncCore.flattenSettings(current) };
+    paths.forEach((path) => {
+      candidate[path] = set[path];
+    });
+    const sanitized = SyncCore.flattenSettings(sanitizeSettings(SyncCore.unflattenSettings(candidate), current));
+    const out = {};
+    paths.forEach((path) => {
+      if (path in sanitized) {
+        out[path] = sanitized[path];
+      }
+    });
+    return Object.keys(out).length ? { c: "settings", set: out } : null;
+  }
+
+  if (raw.c === "root") {
+    return isValidSyncId(set.selectedEngineId) ? { c: "root", set: { selectedEngineId: set.selectedEngineId } } : null;
+  }
+
+  const fields = SYNC_ENTITY_FIELDS[raw.c];
+  if (!fields || !isValidSyncId(raw.id)) {
+    return null;
+  }
+  const records = doc[raw.c];
+  const exists = Boolean(records[raw.id]);
+  if (raw.del) {
+    if (!exists || (raw.c === "engines" && Object.keys(records).length <= 1)) {
+      return null;
+    }
+    return { c: raw.c, id: raw.id, del: 1 };
+  }
+  if (doc.tomb[`${raw.c}:${raw.id}`]) {
+    return null;
+  }
+  const out = {};
+  Object.entries(set).forEach(([field, value]) => {
+    if (field === "$k") {
+      if (SyncCore.isValidKey(value)) {
+        out.$k = value;
+      }
+    } else if (field === "$p") {
+      if (raw.c === "links" && isValidSyncId(value)) {
+        out.$p = value;
+      }
+    } else if (fields[field]) {
+      const clean = fields[field](value);
+      if (clean !== undefined) {
+        out[field] = clean;
+      }
+    }
+  });
+  if (!exists && SYNC_REQUIRED_FIELDS[raw.c].some((field) => out[field] === undefined)) {
+    return null;
+  }
+  const unset = Array.isArray(raw.unset)
+    ? raw.unset.filter((field) => SYNC_OPTIONAL_FIELDS[raw.c].includes(field))
+    : [];
+  if (!Object.keys(out).length && !unset.length) {
+    return null;
+  }
+  const op = { c: raw.c, id: raw.id, set: out };
+  if (unset.length) {
+    op.unset = unset;
+  }
+  return op;
+}
+
+function trimSyncTombs(doc) {
+  const keys = Object.keys(doc.tomb);
+  if (keys.length > SYNC_TOMB_LIMIT) {
+    keys.slice(0, keys.length - SYNC_TOMB_LIMIT).forEach((key) => {
+      delete doc.tomb[key];
+    });
+  }
+}
+
+// trusted = server-generated ops (restore); client ops are validated one by one against the doc.
+function applySyncBatch(userId, batchId, rawOps, { trusted = false } = {}) {
+  return db.transaction(() => {
+    const record = getSyncRecord(userId);
+    if (db.prepare("SELECT 1 FROM user_sync_log WHERE user_id = ? AND batch_id = ?").get(userId, batchId)) {
+      return record;
+    }
+    let doc = SyncCore.normalizeDoc(JSON.parse(JSON.stringify(record.doc)));
+    const accepted = [];
+    rawOps.forEach((raw) => {
+      const op = trusted ? raw : sanitizeSyncOp(raw, doc);
+      if (op) {
+        doc = SyncCore.applyOpInPlace(doc, op);
+        accepted.push(op);
+      }
+    });
+    if (!accepted.length) {
+      return record;
+    }
+    maybeSnapshotBeforeChange(userId, record, { force: trusted });
+    trimSyncTombs(doc);
+    const rev = record.rev + 1;
+    const updatedAt = new Date().toISOString();
+    db.prepare("UPDATE user_sync SET doc = ?, rev = ?, updated_at = ? WHERE user_id = ?").run(
+      JSON.stringify(doc),
+      rev,
+      updatedAt,
+      userId
+    );
+    db.prepare("INSERT INTO user_sync_log (user_id, rev, batch_id, ops, created_at) VALUES (?, ?, ?, ?, ?)").run(
+      userId,
+      rev,
+      batchId,
+      JSON.stringify(accepted),
+      updatedAt
+    );
+    db.prepare("DELETE FROM user_sync_log WHERE user_id = ? AND rev <= ?").run(userId, rev - SYNC_LOG_KEEP);
+    return { doc, rev, updatedAt };
   })();
-  return getAutoBackup(userId);
+}
+
+function restoreSyncFromState(userId, state) {
+  const current = getSyncRecord(userId);
+  const doc = SyncCore.docFromState(sanitizeState(state, defaultState));
+  // Keep old tombstones (so stale clients can't resurrect deleted items) except for restored ids.
+  Object.keys(current.doc.tomb).forEach((key) => {
+    const [collection, id] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+    if (!doc[collection]?.[id]) {
+      doc.tomb[key] = 1;
+    }
+  });
+  return applySyncBatch(userId, `restore-${crypto.randomUUID()}`, [{ c: "reset", doc }], { trusted: true });
 }
 
 function getBackupListPayload(userId) {
@@ -1134,6 +1418,7 @@ function getBackupListPayload(userId) {
     autoBackup: getAutoBackup(userId),
     autoBackups: listAutoBackups(userId),
     autoBackupLimit: AUTO_BACKUP_HISTORY_LIMIT,
+    autoBackupIntervalMinutes: AUTO_SNAPSHOT_INTERVAL_MS / 60000,
     backupLimit: USER_BACKUP_LIMIT,
   };
 }

@@ -12,8 +12,8 @@
 说明：
 
 - 除登录、注册、健康检查、Bing 背景接口外，大多数用户数据接口都需要登录
-- 当前前端已经改成“本地优先 + 手动备份 / 手动同步”
-- 后端仍然保留 `/api/state` 和 `/api/history`，但前端不会在启动时自动拉取状态覆盖本地
+- 登录用户的数据通过字段级同步（`/api/sync`）在所有窗口和设备间自动合并；备份 / 快照只用于找回
+- `/api/state` 只读（同步数据的普通数组视图）；`/api/history` 仍保留，但前端以本地历史为主
 
 ## 2. 认证接口
 
@@ -148,61 +148,77 @@
 }
 ```
 
-## 4. 用户状态接口
+## 4. 同步接口
 
-### `GET /api/state`
+数据模型与合并规则见 `public/js/sync-core.js`（前后端共用同一份代码）和 `docs/DEVELOPER_GUIDE.md` 第 4 节。
 
-用途：
-
-- 读取当前用户完整状态
-
-需要登录。
-
-返回结构是一个状态记录，包含：
-
-- `data`
-- `updatedAt`
-
-其中 `data` 的主体字段通常包括：
-
-- `settings`
-- `engines`
-- `selectedEngineId`
-- `categories`
-- `history`
-
-### `PUT /api/state`
-
-用途：
-
-- 合并更新当前用户状态
-
-需要登录。
-
-请求体：
+### 数据模型（doc）
 
 ```json
 {
-  "settings": {
-    "siteTitle": "mx search"
-  }
+  "v": 1,
+  "settings": { "siteTitle": "mx search", "background.provider": "bing_hourly" },
+  "root": { "selectedEngineId": "google" },
+  "categories": { "cat_ai": { "name": "AI", "isPinned": false, "$k": "e" } },
+  "links": { "gemini": { "label": "Gemini", "url": "https://gemini.google.com/", "$p": "cat_ai", "$k": "1s" } },
+  "engines": { "google": { "name": "Google", "urlTemplate": "https://www.google.com/search?q=%s", "$k": "i" } },
+  "tomb": { "links:old_id": 1 }
 }
 ```
 
-说明：
+- `$k`：分数排序键（字符串比较），移动只改被移动项自己的键
+- `$p`：标签所属分类
+- `tomb`：已删除的 id，之后对它的修改会被忽略（删除优先）
+- `settings.historyLimit` 是本机偏好，不参与同步
 
-- 服务端不是整份替换，而是做状态 merge
-- 当前前端的高频操作大多已经本地优先，不再依赖这个接口实时回灌页面
+### 操作（op）
+
+| 形式 | 含义 |
+| --- | --- |
+| `{ "c": "links", "id": "x", "set": { "label": "新名字" } }` | 新建或修改字段（新建需带齐必填字段和 `$k`，标签还要 `$p`） |
+| `{ "c": "links", "id": "x", "set": { "$k": "1", "$p": "cat_dev" } }` | 移动 / 跨分类移动 |
+| `{ "c": "categories", "id": "x", "del": 1 }` | 删除 |
+| `{ "c": "settings", "set": { "background.provider": "custom_url" } }` | 改设置（按路径） |
+| `{ "c": "root", "set": { "selectedEngineId": "bing" } }` | 改默认引擎 |
+| `{ "c": "reset", "doc": { … } }` | 整份替换，只由服务端生成（恢复备份） |
+
+服务端逐条校验：未知字段丢弃，`label` / `url` / `name` / `urlTemplate` 及设置值按原有规则清洗（例如透明度会被夹到合法范围），引擎不能删到 0 个。存进日志、回放给客户端的是清洗后的 op，所以所有客户端结果一致。
+
+### `GET /api/sync?since=<rev>`
+
+需要登录。拉取 `since` 之后的改动：
+
+- 没有新改动：`{ "rev": 12, "updatedAt": "…" }`（约 50 字节）
+- 有新改动：`{ "rev": 14, "updatedAt": "…", "batches": [{ "rev": 13, "id": "<batchId>", "ops": [ … ] }, …] }`
+- 不带 `since`、落后太多（> 200 批）或日志已清理：`{ "rev": 14, "updatedAt": "…", "doc": { … } }`
+
+第一次使用时，服务端用该用户「旧状态 / 最新自动备份 / 最新手动备份」里最新的一份初始化 doc（`rev` = 0）。
+
+### `POST /api/sync`
+
+需要登录。请求体：
+
+```json
+{ "since": 12, "batchId": "8-64 位字母数字/-/_", "ops": [ { "c": "links", "id": "gemini", "set": { "label": "Gemini Pro" } } ] }
+```
+
+返回：`{ "ack": "<batchId>", "rev": …, "batches" | "doc": … }`，和 `GET` 一样包含 `since` 之后的全部批次（含这一批），客户端据此更新本地基线。
+
+- `batchId` 幂等：同一个 id 重发不会重复应用（网络失败重试、页面关闭时的 keepalive 请求都会重发同一个 id）
+- 所有 op 都被丢弃时不增加 `rev`，但仍返回 `ack`
+- 单批最多 5000 个 op；服务端保留最近 500 批日志
+
+### `GET /api/state`
+
+只读，返回 `{ "state": { settings, engines, selectedEngineId, categories, history }, "updatedAt" }`，内容来自同步 doc。原来的 `PUT /api/state` 已移除（写入一律走 `/api/sync`）。
 
 ## 5. 手动备份接口
 
-这是当前项目里最重要的一组接口。
+备份只用于找回旧版本，多端一致靠上面的同步接口。
 
-设计目标：
-
-- 不做自动多设备同步
-- 由用户手动决定何时备份本地数据到云端
-- 由用户手动决定何时从某条备份覆盖回本地
+- **手动备份**（`kind = manual`）：用户点「立即备份」创建，最多 10 条
+- **自动快照**（`kind = auto`）：服务端在一批改动写入前，如果最近一份快照已超过 1 小时，就先把改动前的状态存一份；内容和最新快照相同则跳过；最多 10 份。恢复备份前一定会存一份（不受 1 小时限制）
+- 两类各自计数、各自清理，自动快照不会挤掉手动备份
 
 ### `GET /api/backups`
 
@@ -238,39 +254,22 @@
 - 后端每个用户最多保留 `backupLimit`（当前为 10）条，超出时自动删除最早的一条
 - `summary` 是备份内容摘要（分类数、标签数、引擎数、JSON 字节数），供备份页列表展示
 - `POST` / `PATCH` / `DELETE` 备份接口返回的 `backups` 列表结构相同，也带 `backupLimit`
+- 同时返回 `autoBackup`（最新自动快照）、`autoBackups`（全部自动快照，新到旧）、`autoBackupLimit`（10）、`autoBackupIntervalMinutes`（60）
 
-### `PUT /api/backups/auto`
+### `POST /api/backups/:backupId/restore`
 
 用途：
 
-- 写入一个新的自动备份版本（带时间戳）。前端在最后一次改动 30 秒后调用，离开页面时用 `keepalive` 立即调用
-- 内容与最新版本完全相同时不新增，只刷新最新版本的时间
+- 用某条手动备份或自动快照替换当前同步数据
 
-需要登录。
-
-请求体：与 `POST /api/backups` 相同（`{ "state": { ... } }`）
-
-成功返回：
-
-```json
-{
-  "ok": true,
-  "autoBackup": {
-    "id": "15",
-    "name": "自动备份",
-    "kind": "auto",
-    "createdAt": "2026-10-26T15:42:10.000Z",
-    "summary": { "categories": 4, "links": 60, "engines": 8, "bytes": 5413 }
-  }
-}
-```
+需要登录。成功返回 `{ "ok": true, "rev": 15, "updatedAt": "…" }`。
 
 说明：
 
-- 数据表 `user_backups` 新增 `kind` 列（`manual` / `auto`，老数据迁移为 `manual`）
-- 每个用户保留最近 `autoBackupLimit`（当前为 20）个 `auto` 版本，超出时删除最早的；不计入手动备份上限，也不会被手动备份的清理删掉
-- 自动备份不能重命名或删除（`PATCH` / `DELETE` 返回 404），但可以用 `GET /api/backups/:backupId` 恢复
-- `GET /api/backups` 以及创建 / 重命名 / 删除手动备份的返回里都带 `autoBackup`（最新版本，没有时为 `null`）、`autoBackups`（全部版本，新到旧）和 `autoBackupLimit`；`backups` 只包含手动备份
+- 服务端生成一个 `reset` 批次写入同步日志，所有窗口和设备下次拉取时都会切到恢复后的内容
+- 恢复前先强制存一份自动快照，恢复本身也可以撤回
+- 自动快照不能重命名或删除（`PATCH` / `DELETE` 返回 404）
+- 原来的 `PUT /api/backups/auto`（客户端整份上传自动备份）已移除
 
 ### `GET /api/backups/:backupId`
 
@@ -669,5 +668,5 @@ DELETE /api/history?id=history_xxx
 
 当前最容易误判的点有两个：
 
-1. `/api/state` 还在，但前端已经不是自动同步模型
+1. `/api/state` 只读；所有写入走 `/api/sync`，要看某个用户的改动历史可以查 `user_sync_log` 表
 2. `/api/history` 还在，但前端主路径现在以本地历史为主

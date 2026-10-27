@@ -9,6 +9,7 @@ function createGuestPayload() {
 }
 
 function applyGuestState() {
+  lastRenderedSyncKey = "";
   const payload = createGuestPayload();
   applyState(payload, { persistLocalCache: false });
 }
@@ -98,56 +99,6 @@ async function refreshAuthStatus() {
   updateAuthMeta();
 }
 
-async function hydrateStateFromServerOnce(options = {}) {
-  if (!authState.loggedIn) {
-    return false;
-  }
-
-  try {
-    const payload = await fetchJson("/api/state");
-    applyState(payload, { persistLocalCache: true, preserveLocalHistoryLimit: true });
-    return true;
-  } catch (error) {
-    console.error(error);
-    if (options.silent !== true) {
-      showNotice("已登录，但拉取云端布局失败", "error");
-    }
-    return false;
-  }
-}
-
-async function hydratePreferredUserStateOnce(options = {}) {
-  if (!authState.loggedIn) {
-    return false;
-  }
-
-  try {
-    const backupListPayload = await fetchJson("/api/backups");
-    syncModalBackups = Array.isArray(backupListPayload?.backups) ? backupListPayload.backups : [];
-    applyBackupLimit(backupListPayload);
-    // Auto backups are written after every change, so they're usually the newest copy; loading the
-    // latest *manual* backup here used to roll a fresh window back to that older snapshot.
-    const latestBackupId = [syncModalAutoBackup, syncModalBackups[0]]
-      .filter((backup) => backup?.id && Number.isFinite(Date.parse(backup.createdAt)))
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]?.id;
-    if (latestBackupId) {
-      const backupPayload = await fetchJson(`/api/backups/${encodeURIComponent(latestBackupId)}`);
-      applyState(
-        { state: backupPayload.state, updatedAt: backupPayload.createdAt || new Date().toISOString() },
-        { persistLocalCache: true, preserveLocalHistoryLimit: true }
-      );
-      return true;
-    }
-  } catch (error) {
-    console.error(error);
-    if (options.silent !== true) {
-      showNotice("云端备份读取失败，已回退到账号布局", "error");
-    }
-  }
-
-  return hydrateStateFromServerOnce(options);
-}
-
 async function handleOpenSettingsClick() {
   if (authState.loggedIn) {
     openSettings();
@@ -175,7 +126,7 @@ async function handleLoginSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
-    await hydratePreferredUserStateOnce();
+    await startUserSync();
     closeAuthModal();
     renderSyncStatus();
     showNotice(`欢迎回来，${authState.username}`, "success");
@@ -221,7 +172,7 @@ async function handleRegisterSubmit(event) {
       body: JSON.stringify({ username, password }),
     });
     await refreshAuthStatus();
-    await hydratePreferredUserStateOnce();
+    await startUserSync();
     closeAuthModal();
     renderSyncStatus();
     showNotice(`注册成功，欢迎 ${authState.username}`, "success");
@@ -250,9 +201,8 @@ async function handleLogout() {
     return;
   }
 
-  await flushAutoBackup().catch(() => {});
-  window.clearTimeout(autoBackupTimer);
-  autoBackupTimer = 0;
+  await pushSync().catch(() => {});
+  clearSyncStore();
   try {
     await fetchJson("/api/auth/logout", { method: "POST" });
   } catch (error) {

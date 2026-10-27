@@ -64,7 +64,7 @@ function openSettings() {
     return;
   }
 
-  settingsDraftStale = false;
+  settingsDraftBaseDoc = syncViewDoc;
   settingsDraft = structuredClone({
     settings: appState.settings,
     engines: appState.engines,
@@ -673,52 +673,17 @@ async function saveSettings(event) {
   if (!settingsDraft) {
     return;
   }
-  if (settingsDraftStale) {
-    // The draft was cloned before another window changed the data; saving it would undo that change.
-    const confirmed = await openConfirmDialog({
-      title: "其他窗口已修改配置",
-      message: "打开设置后，另一个窗口修改了首页配置。继续保存会用这里的内容覆盖那些修改，是否继续？",
-      confirmText: "仍然保存",
-      tone: "danger",
-      scopeElement: settingsDrawer,
-    });
-    if (!confirmed) {
-      return;
-    }
-    settingsDraftStale = false;
-  }
-
   try {
-    const historyLimitOnlyChange =
-      JSON.stringify({
-        settings: {
-          ...appState.settings,
-          historyLimit: undefined,
-        },
-        engines: appState.engines,
-        selectedEngineId: appState.selectedEngineId,
-        categories: appState.categories,
-      }) ===
-      JSON.stringify({
-        settings: {
-          ...settingsDraft.settings,
-          historyLimit: undefined,
-        },
-        engines: settingsDraft.engines,
-        selectedEngineId: settingsDraft.selectedEngineId,
-        categories: settingsDraft.categories,
-      });
-
     await updateState({
       settings: settingsDraft.settings,
       engines: settingsDraft.engines,
       selectedEngineId: settingsDraft.selectedEngineId,
       categories: settingsDraft.categories,
     }, {
-      markDirty: !historyLimitOnlyChange,
+      syncBaseDoc: settingsDraftBaseDoc,
     });
     closeSettings();
-    showNotice("设置已保存到本地", "success");
+    showNotice(authState.loggedIn ? "设置已保存，正在同步到云端" : "设置已保存到本地", "success");
   } catch (error) {
     console.error(error);
     showNotice("保存失败，请检查输入格式", "error");

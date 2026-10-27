@@ -39,53 +39,57 @@ function closeSyncModal() {
 function renderSyncModalMeta() {
   if (syncModalMeta) {
     syncModalMeta.textContent = authState.loggedIn
-      ? `已登录 ${authState.username || ""} · 改动会自动备份，也可随时手动备份`
+      ? `已登录 ${authState.username || ""} · 改动实时同步到所有窗口和设备`
       : "登录后可管理云端备份与同步。";
   }
   renderSyncModalStatus();
+}
+
+// One place that turns the sync state into a tone + short title + detail (status pill and backup page).
+function getSyncStatusInfo() {
+  if (!authState.loggedIn) {
+    return {
+      tone: "default",
+      pill: authState.userCount ? "登录后可同步" : "注册后可同步",
+      title: "尚未登录",
+      detail: "登录后首页配置会在所有窗口和设备间自动同步。",
+    };
+  }
+  const store = loadSyncStore();
+  const unsent = hasUnsentSyncChanges(store);
+  if (syncPhase === "pushing") {
+    return { tone: "warning", pill: "同步中…", title: "正在同步…", detail: "正在把刚才的改动上传到云端。" };
+  }
+  if (syncPhase === "offline") {
+    return {
+      tone: "warning",
+      pill: unsent ? "未同步 · 稍后重试" : "暂时离线",
+      title: "暂时无法连接云端",
+      detail: "改动已保存在本机，恢复连接后会自动同步。",
+    };
+  }
+  if (unsent) {
+    return { tone: "warning", pill: "待同步", title: "有改动等待同步", detail: "停止修改后约 1 秒自动上传，只发送改动的部分。" };
+  }
+  const syncedAt = store?.syncedAt || "";
+  return {
+    tone: "success",
+    pill: syncedAt ? `已同步 · ${formatTime(syncedAt)}` : "已同步",
+    title: "已与云端同步",
+    detail: syncedAt
+      ? `最近同步 ${formatRelativeTime(syncedAt)}，其他窗口和设备的改动会自动合并进来。`
+      : "其他窗口和设备的改动会自动合并进来。",
+  };
 }
 
 function renderSyncModalStatus() {
   if (!syncStatusCard || !syncStatusTitle || !syncStatusDetail) {
     return;
   }
-  const meta = getCurrentSyncMeta();
-  const latest = syncModalBackups[0];
-  let tone = "success";
-  let title = "云端备份已是最新";
-  let detail = latest?.createdAt
-    ? `最近一次备份 ${formatRelativeTime(latest.createdAt)}`
-    : "本地改动不会自动上传，需要时手动备份。";
-
-  if (!authState.loggedIn) {
-    tone = "default";
-    title = "尚未登录";
-    detail = "登录后即可把首页配置备份到云端。";
-  } else if (autoBackupInFlight) {
-    tone = "warning";
-    title = "正在自动备份…";
-    detail = "正在把最新改动保存到云端。";
-  } else if (meta.dirty) {
-    tone = "warning";
-    title = "有未备份的改动";
-    detail = autoBackupTimer
-      ? "停止修改 30 秒后会自动备份，也可以立即创建一份手动备份。"
-      : "当前改动只保存在本机，建议立即备份。";
-  } else if (syncModalAutoBackup?.createdAt) {
-    title = "已自动备份";
-    detail = `最近一次自动备份 ${formatRelativeTime(syncModalAutoBackup.createdAt)}，改动后会自动更新。`;
-  } else if (meta.lastAction === "sync" && meta.lastActionAt) {
-    title = "已从云端恢复";
-    detail = `${formatRelativeTime(meta.lastActionAt)}同步到本机`;
-  } else if (!latest && syncModalLoaded) {
-    tone = "default";
-    title = "还没有云端备份";
-    detail = "创建第一份备份，换设备时可以一键恢复。";
-  }
-
-  syncStatusCard.dataset.tone = tone;
-  syncStatusTitle.textContent = title;
-  syncStatusDetail.textContent = detail;
+  const info = getSyncStatusInfo();
+  syncStatusCard.dataset.tone = info.tone;
+  syncStatusTitle.textContent = info.title;
+  syncStatusDetail.textContent = info.detail;
 }
 
 function setSyncModalMessage(message = "", tone = "error") {
@@ -170,8 +174,8 @@ function renderBackupTime(createdAt) {
   return `<time datetime="${escapeAttribute(createdAt)}">${escapeHtml(formatPreciseTime(createdAt))} · ${escapeHtml(formatRelativeTime(createdAt))}</time>`;
 }
 
-// Auto backups: the latest version is pinned above the manual list, older timestamped versions
-// fold underneath it. Restore only (no rename / delete).
+// Auto snapshots (server-side, at most hourly, before a change lands): the newest is pinned above the
+// manual list, older ones fold underneath it. Restore only (no rename / delete).
 function renderAutoBackupRow(backup, { isHistory = false } = {}) {
   const backupId = escapeAttribute(backup.id || "");
   return `
@@ -181,8 +185,8 @@ function renderAutoBackupRow(backup, { isHistory = false } = {}) {
       </span>
       <div class="sync-backup-body">
         <div class="sync-backup-title-row">
-          <p class="sync-backup-title">${isHistory ? "自动备份 · 历史版本" : "自动备份"}</p>
-          ${isHistory ? "" : '<span class="sync-backup-badge is-auto">最新</span>'}
+          <p class="sync-backup-title">${isHistory ? "自动快照" : "自动快照 · 最新"}</p>
+          ${isHistory ? "" : '<span class="sync-backup-badge is-auto">自动</span>'}
         </div>
         <p class="sync-backup-meta">
           ${renderBackupTime(backup.createdAt || "")}
@@ -204,7 +208,7 @@ function renderAutoBackupSection() {
   const toggle = history.length
     ? `
       <button class="sync-auto-history-toggle" type="button" data-backup-action="toggle-auto-history" data-backup-id="auto" aria-expanded="${syncAutoHistoryOpen ? "true" : "false"}">
-        <span>${syncAutoHistoryOpen ? "收起" : "查看"}自动备份历史（${history.length} 个版本）</span>
+        <span>${syncAutoHistoryOpen ? "收起" : "查看"}更早的自动快照（${history.length} 个）</span>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
       </button>
     `
@@ -325,7 +329,6 @@ async function handleBackupNow() {
     syncModalBackups = Array.isArray(payload?.backups) ? payload.backups : syncModalBackups;
     applyBackupLimit(payload);
     syncModalLoaded = true;
-    markSyncAction("backup");
     renderBackupList();
     setSyncModalMessage("当前本地数据已备份到云端。", "success");
     showNotice("当前本地数据已备份到云端", "success");
@@ -345,9 +348,9 @@ async function handleRestoreBackup(backupId) {
     return;
   }
   const confirmed = await openConfirmDialog({
-    title: "同步到本地",
-    message: "同步会用所选云端备份覆盖当前本地数据。当前本地未备份改动会被替换，是否继续？",
-    confirmText: "同步到本地",
+    title: "恢复备份",
+    message: "恢复会用所选备份替换当前首页配置，并同步到你所有的窗口和设备。恢复前的状态会自动留一份快照，是否继续？",
+    confirmText: "恢复",
     scopeElement: syncModal,
   });
   if (!confirmed) {
@@ -356,25 +359,23 @@ async function handleRestoreBackup(backupId) {
   setSyncModalBusyState(true);
   setSyncModalMessage("");
   try {
-    const payload = await fetchJson(`/api/backups/${encodeURIComponent(backupId)}`);
-    await hydrateServerIconCacheForState(payload.state);
-    applyState(
-      {
-        state: payload.state,
-        updatedAt: new Date().toISOString(),
-      },
-      { persistLocalCache: true, preserveLocalHistoryLimit: true }
-    );
-    queuePromoteRelevantIconCacheEntries(payload.state);
-    markSyncAction("sync");
-    setSyncModalMessage("云端备份已同步到当前设备。", "success");
-    showNotice("云端备份已同步到当前设备", "success");
+    // Send queued edits first so they land before (and are replaced by) the restore, not after it.
+    await pushSync();
+    await fetchJson(`/api/backups/${encodeURIComponent(backupId)}/restore`, { method: "POST" });
+    await pullSync();
+    if (appState) {
+      await hydrateServerIconCacheForState(appState);
+      queuePromoteRelevantIconCacheEntries(appState);
+    }
+    await refreshBackupList();
+    setSyncModalMessage("已恢复，并同步到所有窗口和设备。", "success");
+    showNotice("备份已恢复", "success");
   } catch (error) {
     console.error(error);
     if (await handleSyncAuthError(error)) {
       return;
     }
-    setSyncModalMessage(error.message || "同步失败，请稍后重试");
+    setSyncModalMessage(error.message || "恢复失败，请稍后重试");
   } finally {
     setSyncModalBusyState(false);
   }
@@ -461,214 +462,22 @@ async function handleDeleteBackup(backupId) {
   }
 }
 
-function loadSyncMetaStore() {
-  try {
-    const raw = window.localStorage.getItem(SYNC_META_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistSyncMetaStore(store) {
-  try {
-    window.localStorage.setItem(SYNC_META_STORAGE_KEY, JSON.stringify(store));
-  } catch {}
-}
-
-function getDefaultSyncMeta(username = "") {
-  return {
-    username,
-    dirty: false,
-    lastAction: "",
-    lastActionAt: "",
-  };
-}
-
-function getCurrentSyncMeta() {
-  if (!authState.loggedIn || !authState.username) {
-    return getDefaultSyncMeta();
-  }
-  const store = loadSyncMetaStore();
-  const entry = store[authState.username];
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-    return getDefaultSyncMeta(authState.username);
-  }
-  return {
-    username: authState.username,
-    dirty: Boolean(entry.dirty),
-    lastAction: ["backup", "sync", "auto"].includes(entry.lastAction) ? entry.lastAction : "",
-    lastActionAt:
-      typeof entry.lastActionAt === "string" && entry.lastActionAt.trim()
-        ? entry.lastActionAt.trim()
-        : "",
-  };
-}
-
-function saveCurrentSyncMeta(meta) {
-  if (!authState.loggedIn || !authState.username) {
-    return;
-  }
-  const nextMeta = {
-    username: authState.username,
-    dirty: Boolean(meta?.dirty),
-    lastAction: ["backup", "sync", "auto"].includes(meta?.lastAction) ? meta.lastAction : "",
-    lastActionAt:
-      typeof meta?.lastActionAt === "string" && meta.lastActionAt.trim()
-        ? meta.lastActionAt.trim()
-        : "",
-  };
-  const store = loadSyncMetaStore();
-  store[authState.username] = nextMeta;
-  persistSyncMetaStore(store);
-}
-
-function markSyncDirty() {
-  if (!authState.loggedIn) {
-    return;
-  }
-  localChangeVersion += 1;
-  const meta = getCurrentSyncMeta();
-  saveCurrentSyncMeta({
-    ...meta,
-    dirty: true,
-  });
-  scheduleAutoBackup();
-  renderSyncStatus();
-}
-
-// Debounced: every change restarts the timer, so a burst of edits is saved once, 30s after the last one.
-function scheduleAutoBackup(delay = AUTO_BACKUP_DELAY_MS) {
-  if (!authState.loggedIn) {
-    return;
-  }
-  window.clearTimeout(autoBackupTimer);
-  autoBackupTimer = window.setTimeout(() => {
-    autoBackupTimer = 0;
-    void runAutoBackup();
-  }, delay);
-}
-
-function hasPendingAutoBackup() {
-  return Boolean(autoBackupTimer || autoBackupInFlight);
-}
-
-async function runAutoBackup({ keepalive = false } = {}) {
-  if (!authState.loggedIn || !appState) {
-    return;
-  }
-  if (autoBackupInFlight) {
-    // A save is already running; make sure the newer changes get their own save afterwards.
-    await autoBackupInFlight;
-    if (getCurrentSyncMeta().dirty) {
-      scheduleAutoBackup(0);
-    }
-    return;
-  }
-  window.clearTimeout(autoBackupTimer);
-  autoBackupTimer = 0;
-  const savedVersion = localChangeVersion;
-  const request = fetchJson("/api/backups/auto", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    keepalive,
-    body: JSON.stringify({
-      state: {
-        settings: appState.settings,
-        engines: appState.engines,
-        selectedEngineId: appState.selectedEngineId,
-        categories: appState.categories,
-      },
-    }),
-  });
-  autoBackupInFlight = request;
-  renderSyncStatus();
-  try {
-    const payload = await request;
-    if (payload?.autoBackup) {
-      syncModalAutoBackup = payload.autoBackup;
-      syncModalAutoBackups = [payload.autoBackup, ...syncModalAutoBackups.filter((backup) => backup.id !== payload.autoBackup.id)];
-    }
-    // Only clear "unbacked" if nothing changed while the request was in flight.
-    if (localChangeVersion === savedVersion) {
-      markSyncAction("auto");
-    }
-    if (syncModal && !syncModal.classList.contains("hidden")) {
-      renderBackupList();
-    }
-  } catch (error) {
-    console.warn("auto backup failed, will retry", error);
-    if (error?.status === 401) {
-      return;
-    }
-    scheduleAutoBackup(AUTO_BACKUP_RETRY_MS);
-  } finally {
-    autoBackupInFlight = null;
-    renderSyncStatus();
-  }
-}
-
-// Leaving the page (tab hidden / closed / logout) shouldn't lose the last 30s of changes.
-function flushAutoBackup({ keepalive = false } = {}) {
-  if (!autoBackupTimer || !authState.loggedIn) {
-    return autoBackupInFlight || Promise.resolve();
-  }
-  return runAutoBackup({ keepalive });
-}
-
-function markSyncAction(action) {
-  if (!authState.loggedIn) {
-    return;
-  }
-  saveCurrentSyncMeta({
-    username: authState.username,
-    dirty: false,
-    lastAction: action,
-    lastActionAt: new Date().toISOString(),
-  });
-  renderSyncStatus();
-}
-
 function renderSyncStatus() {
   if (!syncStatus) {
     return;
   }
-
-  let message = "云端备份就绪";
-  let tone = "success";
-
-  if (!authState.loggedIn) {
-    message = authState.userCount ? "登录后可手动备份/同步" : "注册后可手动备份/同步";
-    tone = "default";
-  } else {
-    const meta = getCurrentSyncMeta();
-    if (autoBackupInFlight) {
-      message = "正在自动备份…";
-      tone = "warning";
-    } else if (meta.dirty) {
-      message = autoBackupTimer ? "待自动备份" : "未备份改动";
-      tone = "warning";
-    } else if (meta.lastAction === "auto" && meta.lastActionAt) {
-      message = `已自动备份 · ${formatTime(meta.lastActionAt)}`;
-      tone = "success";
-    } else if (meta.lastAction === "backup" && meta.lastActionAt) {
-      message = `已备份数据 · ${formatTime(meta.lastActionAt)}`;
-      tone = "success";
-    } else if (meta.lastAction === "sync" && meta.lastActionAt) {
-      message = `已同步数据 · ${formatTime(meta.lastActionAt)}`;
-      tone = "success";
-    }
-  }
-
-  syncStatus.innerHTML = `<span class="sync-dot" aria-hidden="true"></span><span>${escapeHtml(message)}</span>`;
-  syncStatus.title = authState.loggedIn ? "点击管理云端备份与同步" : "登录后可管理云端备份与同步";
+  const info = getSyncStatusInfo();
+  syncStatus.innerHTML = `<span class="sync-dot" aria-hidden="true"></span><span>${escapeHtml(info.pill)}</span>`;
+  syncStatus.title = authState.loggedIn ? "点击查看同步状态与备份" : "登录后可同步与备份";
   syncStatus.classList.remove("status-success", "status-error", "status-warning");
-  if (tone === "success") {
+  if (info.tone === "success") {
     syncStatus.classList.add("status-success");
-  } else if (tone === "error") {
+  } else if (info.tone === "error") {
     syncStatus.classList.add("status-error");
-  } else if (tone === "warning") {
+  } else if (info.tone === "warning") {
     syncStatus.classList.add("status-warning");
+  }
+  if (syncModal && !syncModal.classList.contains("hidden")) {
+    renderSyncModalStatus();
   }
 }

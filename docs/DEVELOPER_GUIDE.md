@@ -54,6 +54,7 @@
 | 文件 | 负责 |
 | --- | --- |
 | `utils.js` | 格式化、转义、id、URL 解析、`fetchJson` |
+| `sync-core.js` | 同步数据模型、排序键、diff / apply（**前后端共用**，服务端 `require` 同一个文件） |
 | `icons.js` | 图标来源链、本地/服务端缓存、失败冷却、页面图标发现 |
 | `store.js` | `applyState` / `updateState`、本地快照、数据清洗、设置值应用到页面 |
 | `background.js` | 背景（Bing / Picsum / 自定义）、按小时轮换、背景快照 |
@@ -62,7 +63,8 @@
 | `drag.js` | 标签与整行分类的指针拖动（iOS 风格） |
 | `settings.js` | 设置抽屉各分区、编辑器、导航、快速滚动条、保存 |
 | `quick-add.js` | 首页「＋」快速添加弹窗 |
-| `backup.js` | 云端备份页、右上角备份状态 |
+| `backup.js` | 云端备份页、右上角同步状态 |
+| `sync.js` | 同步引擎：本地同步存储、推送 / 拉取、跨标签页、页面隐藏时 keepalive |
 | `auth.js` | 登录 / 注册 / 退出、加载用户数据 |
 | `dialogs.js` | 遮罩、确认弹窗、toast |
 | `state.js` | DOM 引用、常量、共享可变状态（`appState`、`authState` 等） |
@@ -126,8 +128,10 @@ SQLite 数据库，当前包含：
   - UI 偏好，如搜索框高度、透明度等
 - `BACKGROUND_SNAPSHOT_STORAGE_KEY`
   - 当前背景图快照
+- `SYNC_STORE_KEY`（`mx_sync_v2`）
+  - 同步存储：服务端确认的 doc + `rev` + 待发送的 op，所有标签页共用
 - `SYNC_META_STORAGE_KEY`
-  - 最近一次手动备份/同步状态
+  - 旧版本的「未备份」标记，只在升级后第一次启动时读一次并删除
 - `ICON_CACHE_STORAGE_KEY`
   - 本地图标源缓存
 
@@ -140,88 +144,75 @@ SQLite 数据库，当前包含：
 3. 有快照就直接渲染，没有就用访客态
 4. 再检查登录状态
 5. 如果当前是未登录，则清理登录态快照并退回访客态
-6. 渲染右上角备份状态
+6. 已登录：`startUserSync()`——本机有同步存储就先按它渲染再增量拉取；没有就拉完整 doc
+7. 渲染右上角同步状态
 
 关键点：
 
-- 登录且本机没有未备份改动时，启动会加载云端**最新**的一份备份（自动备份最新版本与最新手动备份里 `createdAt` 较新的那份）
-- 本机有未备份改动时用本地快照，并重新排队自动备份
-- 以前这里只看最新**手动**备份，会把刚自动备份过的新数据回退成旧的手动备份，不要改回去
+- 从旧版本升级：如果旧的「未备份」标记还在，本地快照和服务端 doc 的差异会作为 op 补发一次
 
-## 4. 备份 / 同步模型（自动备份 + 手动备份）
+## 4. 同步模型（字段级同步 + 备份）
 
 这是当前项目最重要的设计约束。
 
-### 当前规则
+### 为什么不是整份上传
 
-- 本地所有修改先写本地
-- 不自动从云端拉取覆盖本地（恢复永远是用户手动操作）
-- **自动备份**：每次本地改动（`markSyncDirty()`）都会重置一个 30 秒计时器；30 秒内没有新改动时，把当前状态写成一个新的自动备份版本（带时间戳，保留最近 20 个，内容相同只刷新时间）。频繁修改只会在最后一次修改 30 秒后提交一次
-- 自动备份请求进行中又有改动：请求完成后不清除「未备份」状态，并立即再排一次
-- 切到后台 / 关闭页面（`visibilitychange` / `pagehide`）时立即提交待处理的自动备份（`keepalive` 请求）；退出登录前也会先提交
-- 失败后 60 秒重试；重新打开页面时如果还有未备份改动，会重新排队
-- **手动备份**：备份页「立即备份」创建，最多保留 10 条，超出时删除最早的一条；可重命名、删除
-- 自动备份最新版本固定显示在备份列表第一行，下面可展开历史版本；只能恢复，不能重命名或删除
+以前是「整份状态上传、后写覆盖」：一个过期的窗口 / 设备随便改一点，就会把整份旧数据写回去，覆盖别人的改动。现在每个标签、分类、引擎都有自己的 id，每个设置项是一个独立路径，改动只以「改了哪个对象的哪个字段」的形式上传。
 
-### 多窗口 / 多标签页
+### 数据模型（`public/js/sync-core.js`）
 
-- 每个标签页有自己的内存状态。`store.js` 的 `handleCrossTabStorage` 监听 `storage` 事件：其他标签页写入本地快照（`mx_state_snapshot_v1`）且 `updatedAt` 更新时，本页直接采用，并取消本页待提交的自动备份（由改动的那页负责提交）
-- 拖拽进行中收到更新会等拖拽结束后再应用
-- 设置页打开期间其他窗口改了数据：提示一次，保存时弹确认，避免用旧草稿覆盖
-- 不同设备之间仍是后写覆盖，靠自动备份历史版本找回
+- 同步的数据存成 doc：`categories` / `links` / `engines` 按 id 存成对象，`settings` 按路径存（`background.provider`）
+- 位置用**分数排序键** `$k`（字符串，按字典序排）：移到两个元素之间就取两者中间的键，只改被移动的那一项；标签所属分类是 `$p`
+- 删除留墓碑 `tomb`，删除优先：A 删、B 同时改名，结果是删除
+- `settings.historyLimit` 是本机偏好，不同步
+- 页面 UI 仍然用普通数组（`appState.categories[].links[]`），`stateFromDoc` / `diffStateToOps` 负责互转，所以拖拽、设置、快速添加等代码不需要知道同步的存在
 
-### 右上角状态按钮语义
+### 冲突规则
 
-右上角按钮现在只表示备份状态，不再承担普通通知。
+- 服务端按到达顺序逐条应用 op，**按字段**后写覆盖：A 改名、B 移动同一个标签，两者都生效；A、B 改同一个字段，以后到的为准
+- 同时在同一位置插入：两个都保留（键相同时按 id 排）
+- 同一项被同时移动：以后到的为准
+- 分类被删除时，别人同时往里加的标签会被丢弃
+- 服务端和客户端运行同一份 `applyOps`，服务端存的是清洗后的 op，所以所有客户端最终一致
 
-可能状态：
+### 客户端流程（`public/js/sync.js`）
 
-- `待自动备份`（有改动，30 秒计时中）
-- `正在自动备份…`
-- `已自动备份 · 时间`
-- `未备份改动`（未在计时，例如自动备份失败等待重试前）
-- `已备份数据 · 时间`（手动备份）
-- `已同步数据 · 时间`
+- 本地存储 `mx_sync_v2`：`base`（服务端确认的 doc）+ `rev` + `outbox`（正在发送的一批，带 `batchId`）+ `pending`（之后的改动）。页面显示的是 `base + outbox + pending`
+- `updateState()`（登录时）→ `commitLocalStateChange()`：用 diff 算出 op，放进 `pending`，1.5 秒后推送；推送回包里带着其他人的改动，一次往返完成合并
+- 拉取：页面变为可见 / 获得焦点 / 恢复联网时，以及可见状态下每 60 秒一次，`GET /api/sync?since=rev`；没有改动时回包约 50 字节。后台标签页不轮询
+- 页面隐藏 / 关闭：把 `pending` 转成 `outbox` 并用 `keepalive` 发出；`batchId` 幂等，之后重发不会重复应用
+- 多标签页：同步存储放在 localStorage，其他标签页通过 `storage` 事件直接重绘；推送 / 拉取用 `navigator.locks` 串行，避免两个标签页同时发同一批
+- 设置抽屉：打开时记下当时的 doc（`settingsDraftBaseDoc`），保存时只对比草稿和这份 doc，所以只提交在抽屉里改过的字段，期间别处的改动不会被旧草稿覆盖
+- 拖拽中收到远端更新会等拖拽结束再重绘
+- 离线时改动留在本机，每 15 秒重试
+
+### 备份（找回用，不参与同步）
+
+- **手动备份**：备份页「立即备份」创建，最多 10 条；可重命名、删除
+- **自动快照**：服务端在一批改动写入前，如果最近快照已超过 1 小时，就先存一份改动前的状态（内容相同跳过），最多 10 份；恢复备份前一定会存一份
+- 两类分开计数，自动快照不会挤掉手动备份
+- 恢复：`POST /api/backups/:id/restore`，服务端写入一个 `reset` 批次，所有设备下次同步时切换过去；客户端恢复前会先把待发送的改动推上去
+
+### 右上角状态按钮
+
+`getSyncStatusInfo()` 统一生成状态按钮和备份页状态卡的文案：
+
+- `已同步 · 时间`
+- `待同步`（有改动，1.5 秒内上传）
+- `同步中…`
+- `未同步 · 稍后重试` / `暂时离线`
 - 未登录提示
 
 普通成功/失败消息统一走 `showNotice()` 的 toast。
 
-### 前端相关函数
+### 相关代码
 
-在 `public/js/backup.js` 中重点看这些：
-
-- `markSyncDirty()` / `scheduleAutoBackup()` / `runAutoBackup()` / `flushAutoBackup()`
-- `renderAutoBackupRow()`
-- `handleManualSyncClick()`
-- `openSyncModal()`
-- `closeSyncModal()`
-- `refreshBackupList()`
-- `renderBackupList()`
-- `handleBackupNow()`
-- `handleRestoreBackup()`
-- `handleDeleteBackup()`
-- `handleRenameBackup()`
-- `renderSyncStatus()`
-
-### 后端相关接口
-
-在 `server.js` 中对应：
-
-- `GET /api/backups`
-- `GET /api/backups/:backupId`
-- `POST /api/backups`
-- `PATCH /api/backups/:backupId`
-- `DELETE /api/backups/:backupId`
-
-### 为什么这样做
-
-因为项目已经明确从“自动同步”切成了“手动备份 / 手动同步”，目标是避免：
-
-- 多设备静默覆盖
-- 后端状态自动回灌把本地页面改乱
-- 刷新后 UI 被后台同步重新洗一遍
-
-如果以后有人想恢复自动同步，必须先重新设计冲突策略，不要直接改回去。
+- `public/js/sync-core.js`：`docFromState()` / `stateFromDoc()` / `diffStateToOps()` / `applyOps()` / `keyBetween()`
+- `public/js/sync.js`：`startUserSync()` / `commitLocalStateChange()` / `pushSync()` / `pullSync()` / `syncNow()` / `flushSyncOnHide()`
+- `public/js/backup.js`：备份页、`handleRestoreBackup()`、`renderSyncStatus()`
+- `server.js`：`GET` / `POST /api/sync`、`sanitizeSyncOp()`、`applySyncBatch()`、`maybeSnapshotBeforeChange()`、`restoreSyncFromState()`
+- 数据表：`user_sync`（doc + rev）、`user_sync_log`（最近 500 批 op）
+- 测试：`npm test`（`tests/sync-core.test.js`，覆盖排序键、往返一致、并发改名 + 移动、删除优先等）
 
 ## 5. 备份数据结构和约束
 
@@ -229,7 +220,7 @@ SQLite 数据库，当前包含：
 
 当前约束：
 
-- 每个用户最多保留最近 3 条
+- 手动备份每个用户最多保留 10 条，自动快照最多 10 条（`kind` 列区分）
 - 每条备份包含完整状态 JSON
 - 备份支持 `name`
 - 允许重命名和删除

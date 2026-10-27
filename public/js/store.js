@@ -180,14 +180,16 @@ async function updateState(patch, options = {}) {
     nextState.selectedEngineId = nextState.engines[0]?.id || "";
   }
   nextState.history = Array.isArray(baseState.history) ? structuredClone(baseState.history) : [];
+  // Logged in: only the changed fields become sync ops (options.syncBaseDoc = the doc a settings
+  // draft was cloned from, so edits made elsewhere meanwhile aren't reverted).
+  if (authState.loggedIn && commitLocalStateChange(nextState, { baseDoc: options.syncBaseDoc })) {
+    return { state: appState, updatedAt: appState.updatedAt };
+  }
   const payload = {
     state: nextState,
     updatedAt: new Date().toISOString(),
   };
   applyState(payload);
-  if (authState.loggedIn && options.markDirty !== false) {
-    markSyncDirty();
-  }
   return payload;
 }
 
@@ -364,53 +366,3 @@ function trimExpandedCategoryState() {
   }
 }
 
-// Cross-tab sync. Every tab keeps its own in-memory state, so without this a second, stale window
-// would write its old copy back (local snapshot + auto backup) on its next change and undo the
-// first window's edits. The `storage` event fires in the *other* tabs whenever one tab persists
-// a snapshot; adopt it when it's newer than what this tab has.
-function handleCrossTabStorage(event) {
-  if (event.storageArea !== window.localStorage) {
-    return;
-  }
-  if (event.key === SYNC_META_STORAGE_KEY) {
-    renderSyncStatus();
-    return;
-  }
-  if (event.key !== STATE_SNAPSHOT_STORAGE_KEY || !event.newValue || !authState.loggedIn) {
-    return;
-  }
-  const payload = loadPersistedStateSnapshot();
-  if (!payload || payload.username !== authState.username) {
-    return;
-  }
-  const incomingTime = Date.parse(payload.updatedAt) || 0;
-  const currentTime = Date.parse(appState?.updatedAt) || 0;
-  if (incomingTime <= currentTime) {
-    return;
-  }
-  pendingExternalStatePayload = payload;
-  applyPendingExternalState();
-}
-
-function applyPendingExternalState() {
-  const payload = pendingExternalStatePayload;
-  if (!payload) {
-    return;
-  }
-  // Re-rendering the board mid-drag would yank the cards away from the pointer; retry afterwards.
-  if (tagPointerDrag.card || tagPointerDrag.settling || rowPointerDrag.row || rowPointerDrag.settling) {
-    window.setTimeout(applyPendingExternalState, 300);
-    return;
-  }
-  pendingExternalStatePayload = null;
-  // The tab that made the change owns its auto backup; this tab's copy is now identical, so drop our
-  // pending save, and bump the version so an in-flight save can't mark the newer change as backed up.
-  window.clearTimeout(autoBackupTimer);
-  autoBackupTimer = 0;
-  localChangeVersion += 1;
-  applyState(payload, { persistLocalCache: false });
-  if (settingsDraft) {
-    settingsDraftStale = true;
-    showNotice("其他窗口刚修改了首页配置，重新打开设置可看到最新内容");
-  }
-}

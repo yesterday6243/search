@@ -15,14 +15,11 @@ async function boot() {
       clearPersistedStateSnapshot();
       applyGuestState();
     }
-    const hasUnsyncedLocalState =
-      cachedStatePayload?.username === authState.username && getCurrentSyncMeta().dirty;
-    if (!hasUnsyncedLocalState) {
-      await hydratePreferredUserStateOnce({ silent: true });
-    } else {
-      // Changes from a previous visit that never reached the cloud.
-      scheduleAutoBackup();
-    }
+    // Edits from the pre-sync version that never reached the cloud are replayed as ops once.
+    const legacyDirty = takeLegacyDirtyFlag(authState.username);
+    await startUserSync({
+      legacyState: legacyDirty && cachedStatePayload?.username === authState.username ? cachedStatePayload.state : null,
+    });
   } else {
     clearPersistedStateSnapshot();
     applyGuestState();
@@ -31,16 +28,7 @@ async function boot() {
 }
 
 function bindEvents() {
-  // keepalive lets the auto-backup request finish even if the tab is being closed.
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") {
-      void flushAutoBackup({ keepalive: true });
-    }
-  });
-  window.addEventListener("pagehide", () => {
-    void flushAutoBackup({ keepalive: true });
-  });
-  window.addEventListener("storage", handleCrossTabStorage);
+  bindSyncEvents();
   // Icon <img> load/error handling is delegated (capture phase, since these events don't bubble)
   // instead of inline onload/onerror attributes, so the CSP can forbid inline handlers.
   document.addEventListener("load", handleManagedIconEvent, true);

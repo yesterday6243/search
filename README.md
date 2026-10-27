@@ -134,7 +134,8 @@ searchindex/
 │  └─ deploy-linux.sh   Linux 部署脚本
 ├─ docs/
 │  └─ DEVELOPER_GUIDE.md 开发接手说明
-├─ server.js            Express 服务、SQLite 读写、API
+├─ server.js            Express 服务、SQLite 读写、API（同步逻辑与前端共用 public/js/sync-core.js）
+├─ tests/               npm test：同步核心的单元测试
 ├─ searchindex.db       主数据库
 ├─ OPTIMIZATION_LOG.md  迭代修复记录
 ├─ package.json
