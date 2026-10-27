@@ -243,7 +243,8 @@
 
 用途：
 
-- 写入（覆盖）当前用户唯一的一份自动备份。前端在最后一次改动 30 秒后调用，离开页面时用 `keepalive` 立即调用
+- 写入一个新的自动备份版本（带时间戳）。前端在最后一次改动 30 秒后调用，离开页面时用 `keepalive` 立即调用
+- 内容与最新版本完全相同时不新增，只刷新最新版本的时间
 
 需要登录。
 
@@ -267,9 +268,9 @@
 说明：
 
 - 数据表 `user_backups` 新增 `kind` 列（`manual` / `auto`，老数据迁移为 `manual`）
-- 每个用户最多一条 `auto`；不计入手动备份上限，也不会被手动备份的清理删掉
+- 每个用户保留最近 `autoBackupLimit`（当前为 20）个 `auto` 版本，超出时删除最早的；不计入手动备份上限，也不会被手动备份的清理删掉
 - 自动备份不能重命名或删除（`PATCH` / `DELETE` 返回 404），但可以用 `GET /api/backups/:backupId` 恢复
-- `GET /api/backups` 以及创建 / 重命名 / 删除手动备份的返回里都带 `autoBackup`（没有时为 `null`），`backups` 只包含手动备份
+- `GET /api/backups` 以及创建 / 重命名 / 删除手动备份的返回里都带 `autoBackup`（最新版本，没有时为 `null`）、`autoBackups`（全部版本，新到旧）和 `autoBackupLimit`；`backups` 只包含手动备份
 
 ### `GET /api/backups/:backupId`
 

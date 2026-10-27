@@ -40,6 +40,7 @@ function bindEvents() {
   window.addEventListener("pagehide", () => {
     void flushAutoBackup({ keepalive: true });
   });
+  window.addEventListener("storage", handleCrossTabStorage);
   // Icon <img> load/error handling is delegated (capture phase, since these events don't bubble)
   // instead of inline onload/onerror attributes, so the CSP can forbid inline handlers.
   document.addEventListener("load", handleManagedIconEvent, true);
@@ -79,6 +80,10 @@ function bindEvents() {
     const backupId = actionButton.dataset.backupId || "";
     const action = actionButton.dataset.backupAction || "";
     if (!backupId || !action) {
+      return;
+    }
+    if (action === "toggle-auto-history") {
+      toggleAutoBackupHistory();
       return;
     }
     if (action === "restore") {

@@ -162,22 +162,30 @@ function getBackupStatsText(summary = {}) {
   ].filter(Boolean);
 }
 
-// The single auto backup, pinned above the manual list: restore only (no rename / delete).
-function renderAutoBackupRow(backup) {
+// Absolute timestamp first (that's what tells versions apart), relative time after it.
+function renderBackupTime(createdAt) {
+  if (!createdAt) {
+    return "<time>未知时间</time>";
+  }
+  return `<time datetime="${escapeAttribute(createdAt)}">${escapeHtml(formatPreciseTime(createdAt))} · ${escapeHtml(formatRelativeTime(createdAt))}</time>`;
+}
+
+// Auto backups: the latest version is pinned above the manual list, older timestamped versions
+// fold underneath it. Restore only (no rename / delete).
+function renderAutoBackupRow(backup, { isHistory = false } = {}) {
   const backupId = escapeAttribute(backup.id || "");
-  const createdAt = backup.createdAt || "";
   return `
-    <article class="sync-backup-item is-auto">
+    <article class="sync-backup-item is-auto${isHistory ? " is-auto-history" : ""}">
       <span class="sync-backup-icon" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M12 4a8 8 0 0 1 7.75 6H22l-3.5 4-3.5-4h2.67A6 6 0 1 0 12 18a5.96 5.96 0 0 0 4.24-1.76l1.42 1.42A8 8 0 1 1 12 4Zm-1 4h2v4.59l3.2 3.2-1.4 1.42L11 13.41V8Z" /></svg>
       </span>
       <div class="sync-backup-body">
         <div class="sync-backup-title-row">
-          <p class="sync-backup-title">自动备份</p>
-          <span class="sync-backup-badge is-auto">自动</span>
+          <p class="sync-backup-title">${isHistory ? "自动备份 · 历史版本" : "自动备份"}</p>
+          ${isHistory ? "" : '<span class="sync-backup-badge is-auto">最新</span>'}
         </div>
         <p class="sync-backup-meta">
-          <time datetime="${escapeAttribute(createdAt)}" title="${escapeAttribute(createdAt ? formatPreciseTime(createdAt) : "")}">${escapeHtml(createdAt ? formatRelativeTime(createdAt) : "未知时间")}</time>
+          ${renderBackupTime(backup.createdAt || "")}
           ${getBackupStatsText(backup.summary).map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
         </p>
       </div>
@@ -188,9 +196,36 @@ function renderAutoBackupRow(backup) {
   `;
 }
 
+function renderAutoBackupSection() {
+  if (!syncModalAutoBackup) {
+    return "";
+  }
+  const history = syncModalAutoBackups.filter((backup) => backup.id !== syncModalAutoBackup.id);
+  const toggle = history.length
+    ? `
+      <button class="sync-auto-history-toggle" type="button" data-backup-action="toggle-auto-history" data-backup-id="auto" aria-expanded="${syncAutoHistoryOpen ? "true" : "false"}">
+        <span>${syncAutoHistoryOpen ? "收起" : "查看"}自动备份历史（${history.length} 个版本）</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+      </button>
+    `
+    : "";
+  const historyRows = syncAutoHistoryOpen
+    ? history.map((backup) => renderAutoBackupRow(backup, { isHistory: true })).join("")
+    : "";
+  return renderAutoBackupRow(syncModalAutoBackup) + toggle + historyRows;
+}
+
+function toggleAutoBackupHistory() {
+  syncAutoHistoryOpen = !syncAutoHistoryOpen;
+  renderBackupList();
+}
+
 function applyBackupLimit(payload) {
   if (payload && "autoBackup" in payload) {
     syncModalAutoBackup = payload.autoBackup || null;
+  }
+  if (Array.isArray(payload?.autoBackups)) {
+    syncModalAutoBackups = payload.autoBackups;
   }
   const limit = Number(payload?.backupLimit);
   if (Number.isInteger(limit) && limit > 0) {
@@ -212,7 +247,7 @@ function renderBackupList() {
     return;
   }
 
-  const autoRow = syncModalAutoBackup ? renderAutoBackupRow(syncModalAutoBackup) : "";
+  const autoRow = renderAutoBackupSection();
   if (!syncModalBackups.length) {
     syncBackupList.innerHTML = autoRow + `
       <div class="sync-backup-empty">
@@ -252,7 +287,7 @@ function renderBackupList() {
               </button>
             </div>
             <p class="sync-backup-meta">
-              <time datetime="${escapeAttribute(createdAt)}" title="${escapeAttribute(createdAt ? formatPreciseTime(createdAt) : "")}">${escapeHtml(createdAt ? formatRelativeTime(createdAt) : "未知时间")}</time>
+              ${renderBackupTime(createdAt)}
               ${stats.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
             </p>
           </div>
@@ -551,7 +586,10 @@ async function runAutoBackup({ keepalive = false } = {}) {
   renderSyncStatus();
   try {
     const payload = await request;
-    syncModalAutoBackup = payload?.autoBackup || syncModalAutoBackup;
+    if (payload?.autoBackup) {
+      syncModalAutoBackup = payload.autoBackup;
+      syncModalAutoBackups = [payload.autoBackup, ...syncModalAutoBackups.filter((backup) => backup.id !== payload.autoBackup.id)];
+    }
     // Only clear "unbacked" if nothing changed while the request was in flight.
     if (localChangeVersion === savedVersion) {
       markSyncAction("auto");

@@ -64,6 +64,7 @@ function openSettings() {
     return;
   }
 
+  settingsDraftStale = false;
   settingsDraft = structuredClone({
     settings: appState.settings,
     engines: appState.engines,
@@ -671,6 +672,20 @@ async function saveSettings(event) {
   event.preventDefault();
   if (!settingsDraft) {
     return;
+  }
+  if (settingsDraftStale) {
+    // The draft was cloned before another window changed the data; saving it would undo that change.
+    const confirmed = await openConfirmDialog({
+      title: "其他窗口已修改配置",
+      message: "打开设置后，另一个窗口修改了首页配置。继续保存会用这里的内容覆盖那些修改，是否继续？",
+      confirmText: "仍然保存",
+      tone: "danger",
+      scopeElement: settingsDrawer,
+    });
+    if (!confirmed) {
+      return;
+    }
+    settingsDraftStale = false;
   }
 
   try {

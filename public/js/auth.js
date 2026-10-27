@@ -124,10 +124,18 @@ async function hydratePreferredUserStateOnce(options = {}) {
   try {
     const backupListPayload = await fetchJson("/api/backups");
     syncModalBackups = Array.isArray(backupListPayload?.backups) ? backupListPayload.backups : [];
-    const latestBackupId = syncModalBackups[0]?.id;
+    applyBackupLimit(backupListPayload);
+    // Auto backups are written after every change, so they're usually the newest copy; loading the
+    // latest *manual* backup here used to roll a fresh window back to that older snapshot.
+    const latestBackupId = [syncModalAutoBackup, syncModalBackups[0]]
+      .filter((backup) => backup?.id && Number.isFinite(Date.parse(backup.createdAt)))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0]?.id;
     if (latestBackupId) {
       const backupPayload = await fetchJson(`/api/backups/${encodeURIComponent(latestBackupId)}`);
-      applyState(backupPayload, { persistLocalCache: true, preserveLocalHistoryLimit: true });
+      applyState(
+        { state: backupPayload.state, updatedAt: backupPayload.createdAt || new Date().toISOString() },
+        { persistLocalCache: true, preserveLocalHistoryLimit: true }
+      );
       return true;
     }
   } catch (error) {

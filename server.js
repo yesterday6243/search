@@ -9,6 +9,8 @@ const HOST = (typeof process.env.HOST === "string" && process.env.HOST.trim()) |
 const HISTORY_LIMIT = 100;
 const USER_LIMIT = 50;
 const USER_BACKUP_LIMIT = 10;
+// Auto backups keep a rolling history, so one stale window/device can't silently replace the only copy.
+const AUTO_BACKUP_HISTORY_LIMIT = 20;
 const PASSWORD_MIN_LENGTH = 8;
 const SESSION_COOKIE_NAME = "mx_search_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -1073,30 +1075,56 @@ function summarizeBackupData(rawData) {
 
 const AUTO_BACKUP_NAME = "自动备份";
 
-function getAutoBackup(userId) {
-  const row = db
-    .prepare(`SELECT id, data, created_at FROM user_backups WHERE user_id = ? AND kind = 'auto' ORDER BY id DESC LIMIT 1`)
-    .get(userId);
-  return row
-    ? { id: String(row.id), name: AUTO_BACKUP_NAME, kind: "auto", createdAt: row.created_at, summary: summarizeBackupData(row.data) }
-    : null;
+function listAutoBackups(userId) {
+  return db
+    .prepare(
+      `SELECT id, data, created_at FROM user_backups WHERE user_id = ? AND kind = 'auto' ORDER BY created_at DESC, id DESC LIMIT ${AUTO_BACKUP_HISTORY_LIMIT}`
+    )
+    .all(userId)
+    .map((row) => ({
+      id: String(row.id),
+      name: AUTO_BACKUP_NAME,
+      kind: "auto",
+      createdAt: row.created_at,
+      summary: summarizeBackupData(row.data),
+    }));
 }
 
-// Overwrites the user's single auto backup (created on first use).
+function getAutoBackup(userId) {
+  return listAutoBackups(userId)[0] || null;
+}
+
+// Each auto save is a new timestamped version (identical content only refreshes the latest version's
+// time); versions beyond AUTO_BACKUP_HISTORY_LIMIT are pruned oldest first.
 function saveAutoBackup(userId, inputState) {
   const state = JSON.stringify(sanitizeState(inputState, defaultState));
   const savedAt = new Date().toISOString();
-  const updated = db
-    .prepare(`UPDATE user_backups SET data = ?, created_at = ?, name = ? WHERE user_id = ? AND kind = 'auto'`)
-    .run(state, savedAt, AUTO_BACKUP_NAME, userId);
-  if (!updated.changes) {
-    db.prepare(`INSERT INTO user_backups (user_id, name, data, created_at, kind) VALUES (?, ?, ?, ?, 'auto')`).run(
-      userId,
-      AUTO_BACKUP_NAME,
-      state,
-      savedAt
-    );
-  }
+  db.transaction(() => {
+    const latest = db
+      .prepare(`SELECT id, data FROM user_backups WHERE user_id = ? AND kind = 'auto' ORDER BY created_at DESC, id DESC LIMIT 1`)
+      .get(userId);
+    if (latest && latest.data === state) {
+      db.prepare(`UPDATE user_backups SET created_at = ? WHERE id = ?`).run(savedAt, latest.id);
+    } else {
+      db.prepare(`INSERT INTO user_backups (user_id, name, data, created_at, kind) VALUES (?, ?, ?, ?, 'auto')`).run(
+        userId,
+        AUTO_BACKUP_NAME,
+        state,
+        savedAt
+      );
+    }
+    db.prepare(
+      `
+        DELETE FROM user_backups
+        WHERE user_id = ? AND kind = 'auto' AND id NOT IN (
+          SELECT id FROM user_backups
+          WHERE user_id = ? AND kind = 'auto'
+          ORDER BY created_at DESC, id DESC
+          LIMIT ${AUTO_BACKUP_HISTORY_LIMIT}
+        )
+      `
+    ).run(userId, userId);
+  })();
   return getAutoBackup(userId);
 }
 
@@ -1104,6 +1132,8 @@ function getBackupListPayload(userId) {
   return {
     backups: listUserBackups(userId),
     autoBackup: getAutoBackup(userId),
+    autoBackups: listAutoBackups(userId),
+    autoBackupLimit: AUTO_BACKUP_HISTORY_LIMIT,
     backupLimit: USER_BACKUP_LIMIT,
   };
 }
